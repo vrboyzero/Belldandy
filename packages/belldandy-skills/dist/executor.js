@@ -1,0 +1,133 @@
+/** 默认策略（最小权限） */
+export const DEFAULT_POLICY = {
+    allowedPaths: [],
+    deniedPaths: [".git", "node_modules", ".env"],
+    allowedDomains: [],
+    deniedDomains: [],
+    maxTimeoutMs: 30_000,
+    maxResponseBytes: 512_000,
+};
+export class ToolExecutor {
+    tools;
+    workspaceRoot;
+    policy;
+    auditLogger;
+    agentCapabilities;
+    constructor(options) {
+        this.tools = new Map(options.tools.map(t => [t.definition.name, t]));
+        this.workspaceRoot = options.workspaceRoot;
+        this.policy = { ...DEFAULT_POLICY, ...options.policy };
+        this.auditLogger = options.auditLogger;
+        this.agentCapabilities = options.agentCapabilities;
+    }
+    /** 获取所有工具定义（用于发送给模型） */
+    getDefinitions() {
+        return Array.from(this.tools.values()).map(t => ({
+            type: "function",
+            function: {
+                name: t.definition.name,
+                description: t.definition.description,
+                parameters: t.definition.parameters,
+            },
+        }));
+    }
+    /** 检查工具是否存在 */
+    hasTool(name) {
+        return this.tools.has(name);
+    }
+    /** 动态注册工具 */
+    registerTool(tool) {
+        if (this.tools.has(tool.definition.name)) {
+            console.warn(`[ToolExecutor] 工具 "${tool.definition.name}" 已存在，将被覆盖`);
+        }
+        this.tools.set(tool.definition.name, tool);
+    }
+    /** 动态注销工具 */
+    unregisterTool(name) {
+        return this.tools.delete(name);
+    }
+    /** 获取已注册的工具数量 */
+    getToolCount() {
+        return this.tools.size;
+    }
+    /** 执行工具调用 */
+    async execute(request, conversationId) {
+        const start = Date.now();
+        const tool = this.tools.get(request.name);
+        if (!tool) {
+            const result = {
+                id: request.id,
+                name: request.name,
+                success: false,
+                output: "",
+                error: `未知工具：${request.name}`,
+                durationMs: Date.now() - start,
+            };
+            this.audit(result, conversationId, request.arguments);
+            return result;
+        }
+        const context = {
+            conversationId,
+            workspaceRoot: this.workspaceRoot,
+            policy: this.policy,
+            agentCapabilities: this.agentCapabilities,
+        };
+        try {
+            const result = await tool.execute(request.arguments, context);
+            // 确保 id 匹配请求
+            result.id = request.id;
+            result.durationMs = Date.now() - start;
+            this.audit(result, conversationId, request.arguments);
+            return result;
+        }
+        catch (err) {
+            const result = {
+                id: request.id,
+                name: request.name,
+                success: false,
+                output: "",
+                error: err instanceof Error ? err.message : String(err),
+                durationMs: Date.now() - start,
+            };
+            this.audit(result, conversationId, request.arguments);
+            return result;
+        }
+    }
+    /** 批量执行（并行） */
+    async executeAll(requests, conversationId) {
+        return Promise.all(requests.map(req => this.execute(req, conversationId)));
+    }
+    audit(result, conversationId, args) {
+        if (!this.auditLogger)
+            return;
+        // 脱敏：不记录可能包含敏感信息的完整输出
+        const safeOutput = result.output.length > 200
+            ? result.output.slice(0, 200) + "...(truncated)"
+            : result.output;
+        this.auditLogger({
+            timestamp: new Date().toISOString(),
+            conversationId,
+            toolName: result.name,
+            arguments: sanitizeArgs(args),
+            success: result.success,
+            output: safeOutput,
+            error: result.error,
+            durationMs: result.durationMs,
+        });
+    }
+}
+/** 脱敏参数（移除可能的敏感字段） */
+function sanitizeArgs(args) {
+    const sensitiveKeys = ["password", "token", "key", "secret", "api_key", "apikey"];
+    const result = {};
+    for (const [k, v] of Object.entries(args)) {
+        if (sensitiveKeys.some(s => k.toLowerCase().includes(s))) {
+            result[k] = "[REDACTED]";
+        }
+        else {
+            result[k] = v;
+        }
+    }
+    return result;
+}
+//# sourceMappingURL=executor.js.map

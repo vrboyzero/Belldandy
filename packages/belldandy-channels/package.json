@@ -1,0 +1,24 @@
+{
+  "name": "@belldandy/channels",
+  "version": "1.0.0",
+  "description": "External communication channels for Belldandy (Feishu, etc.)",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc -w"
+  },
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.42.0",
+    "ws": "^8.18.0",
+    "@belldandy/agent": "workspace:*",
+    "@belldandy/protocol": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "@types/ws": "^8.5.14"
+  }
+}

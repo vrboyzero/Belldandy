@@ -1,0 +1,31 @@
+{
+  "name": "belldandy",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.23.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "dev:gateway": "node --import tsx packages/belldandy-core/src/bin/gateway.ts",
+    "pairing:approve": "node --import tsx packages/belldandy-core/src/bin/pairing-approve.ts",
+    "pairing:revoke": "node --import tsx packages/belldandy-core/src/bin/pairing-revoke.ts",
+    "pairing:list": "node --import tsx packages/belldandy-core/src/bin/pairing-list.ts",
+    "pairing:pending": "node --import tsx packages/belldandy-core/src/bin/pairing-pending.ts",
+    "pairing:cleanup": "node --import tsx packages/belldandy-core/src/bin/pairing-cleanup.ts",
+    "pairing:export": "node --import tsx packages/belldandy-core/src/bin/pairing-export.ts",
+    "pairing:import": "node --import tsx packages/belldandy-core/src/bin/pairing-import.ts",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/node": "^22.13.1",
+    "@types/ws": "^8.18.1",
+    "puppeteer-core": "^24.36.1",
+    "tsx": "^4.20.5",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.9",
+    "ws": "^8.19.0"
+  }
+}

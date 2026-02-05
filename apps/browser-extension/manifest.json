@@ -1,0 +1,23 @@
+{
+    "manifest_version": 3,
+    "name": "Belldandy Browser Relay",
+    "version": "0.1.0",
+    "description": "Connects Chrome to Belldandy Agent via local Relay Server.",
+    "permissions": [
+        "debugger",
+        "tabs",
+        "activeTab",
+        "storage"
+    ],
+    "host_permissions": [
+        "http://127.0.0.1/*",
+        "http://localhost/*"
+    ],
+    "background": {
+        "service_worker": "background.js",
+        "type": "module"
+    },
+    "action": {
+        "default_title": "Belldandy Relay (Click to Connect)"
+    }
+}

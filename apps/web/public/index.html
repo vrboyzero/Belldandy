@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Belldandy WebChat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css?v=10.0" />
+</head>
+
+<body>
+  <main class="layout">
+    <header class="header">
+      <div class="title">Belldandy WebChat (MVP)</div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <div class="status" id="status">disconnected</div>
+        <button id="openSettings" class="settings-btn" title="Settings">⚙️</button>
+      </div>
+    </header>
+
+    <section class="panel">
+      <div class="row">
+        <label class="label">Auth</label>
+        <select id="authMode" class="select">
+          <option value="none">none</option>
+          <option value="token">token</option>
+          <option value="password">password</option>
+        </select>
+        <input id="authValue" class="input" placeholder="token / password（可选）" />
+        <button id="connect" class="button">Connect</button>
+      </div>
+    </section>
+
+    <div class="main-content">
+      <!-- 左侧边栏：智能体设置 -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+          <span class="sidebar-title">智能体设置</span>
+          <button id="refreshTree" class="sidebar-btn" title="刷新">⟳</button>
+        </div>
+        <div class="file-tree" id="fileTree">
+          <div class="tree-loading">加载中...</div>
+        </div>
+      </aside>
+
+      <!-- 主区域 -->
+      <div class="main-area">
+        <!-- 聊天模式：消息列表 -->
+        <section class="chat" id="chatSection">
+          <div class="messages" id="messages"></div>
+        </section>
+
+        <!-- 编辑模式：文件编辑器 -->
+        <section class="editor-section hidden" id="editorSection">
+          <div class="editor-header">
+            <span class="editor-path" id="editorPath">文件路径</span>
+          </div>
+          <textarea class="editor-textarea" id="editorTextarea" spellcheck="false"></textarea>
+        </section>
+      </div>
+    </div>
+
+    <!-- 聊天模式：输入框 -->
+    <section class="composer" id="composerSection">
+      <textarea id="prompt" class="input" placeholder="输入消息…" rows="1"></textarea>
+      <button id="send" class="button" disabled>Send</button>
+    </section>
+
+    <!-- 编辑模式：操作按钮 -->
+    <section class="editor-actions hidden" id="editorActions">
+      <button id="cancelEdit" class="button editor-cancel">取消</button>
+      <button id="saveEdit" class="button editor-save">保存</button>
+    </section>
+  </main>
+
+  <!-- Settings Modal -->
+  <div id="settingsModal" class="modal-overlay hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <span>Settings</span>
+        <button id="closeSettings" class="settings-btn">✕</button>
+      </div>
+      <div class="modal-body">
+        <!-- Doctor Status -->
+        <div class="form-group">
+          <label class="form-label">System Doctor</label>
+          <div id="doctorStatus" style="display: flex; flex-wrap: wrap; gap: 8px;">
+            <span class="badge">Checking...</span>
+          </div>
+        </div>
+        <hr style="width: 100%; border: 0; border-top: 1px solid #eee;">
+
+        <!-- Config Fields -->
+        <div class="form-group">
+          <label class="form-label">OpenAI API Key</label>
+          <input id="cfgApiKey" class="input" type="password" placeholder="sk-..." />
+        </div>
+        <div class="form-group">
+          <label class="form-label">OpenAI Base URL</label>
+          <input id="cfgBaseUrl" class="input" placeholder="https://api.openai.com/v1" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">OpenAI Model</label>
+          <input id="cfgModel" class="input" placeholder="gpt-4o" />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Heartbeat Interval</label>
+          <input id="cfgHeartbeat" class="input" placeholder="30m" />
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="restartBtn" class="button" style="color: #666;">Restart Server</button>
+        <button id="saveSettings" class="button" style="background: #333; color: white;">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Awakening Overlay -->
+  <div id="awakening" class="awakening-overlay hidden">
+    <div class="scanline"></div>
+    <div class="terminal-container">
+      <div id="bootLog" class="boot-log"></div>
+    </div>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+
+</html>

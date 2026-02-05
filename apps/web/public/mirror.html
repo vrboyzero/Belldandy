@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Belldandy Vision Mirror</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #000;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover; /* Fill the screen */
+      transform: scaleX(-1); /* Mirror effect */
+    }
+    #error-msg {
+      color: red;
+      font-family: monospace;
+      display: none;
+      position: absolute;
+      z-index: 10;
+      background: rgba(0,0,0,0.7);
+      padding: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div id="error-msg"></div>
+  <video id="webcam" autoplay playsinline></video>
+
+  <script>
+    const video = document.getElementById('webcam');
+    const errorMsg = document.getElementById('error-msg');
+
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+          audio: false, 
+          video: { 
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            facingMode: "user"
+          } 
+        });
+        video.srcObject = stream;
+        console.log("Camera started");
+      } catch (err) {
+        console.error("Error accessing camera:", err);
+        errorMsg.textContent = `Error accessing camera: ${err.name} - ${err.message}`;
+        errorMsg.style.display = 'block';
+      }
+    }
+
+    // Start immediately
+    startCamera();
+
+    // Click to toggle fullscreen
+    video.addEventListener('click', () => {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+          console.log(`Error attempting to enable fullscreen: ${err.message}`);
+        });
+      } else {
+        if (document.exitFullscreen) {
+          document.exitFullscreen();
+        }
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,607 @@
+# Belldandy 使用手册
+
+Belldandy 是一个运行在你本地电脑上的个人 AI 助手。它注重隐私、安全，并具备记忆与工具使用能力。
+
+本手册将指引你完成安装、配置、启动以及日常使用。
+
+---
+
+## 1. 环境准备
+
+在开始之前，请确保你的电脑满足以下要求：
+
+- **操作系统**：Windows, macOS, 或 Linux
+- **Node.js**：版本 **22.12.0** 或更高（推荐使用 LTS 版本）
+    - [下载 Node.js](https://nodejs.org/)
+- **包管理器**：推荐使用 `pnpm`（本项目已启用 corepack，可自动管理版本）
+
+## 2. 安装步骤
+
+1.  **获取代码**
+    将项目代码下载到你的本地目录（例如 `Belldandy/`）。
+
+2.  **安装依赖**
+    在项目根目录下打开终端（Terminal 或 PowerShell），运行：
+
+    ```bash
+    cd Belldandy
+    corepack pnpm install
+    ```
+
+    这就完成了所有的安装工作。
+
+## 3. 配置指南
+
+Belldandy 使用 **环境变量** 进行配置。为了方便管理，推荐在项目根目录创建一个名为 `.env.local` 的文件（Git 会自动忽略它，保护你的隐私）。
+
+### 3.1 基础配置（必选）
+
+决定你使用什么 AI 模型服务。
+
+**方案 A：使用 OpenAI 协议兼容服务（推荐）**
+如果你有 OpenAI、Gemini、DeepSeek 或本地 LLM（如 Ollama）的 API Key。
+
+在 `.env.local` 中添加：
+
+```env
+# 启用 OpenAI 协议 Provider
+BELLDANDY_AGENT_PROVIDER=openai
+
+# API 服务地址 (例如 Gemini)
+BELLDANDY_OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai
+# 或者本地 Ollama
+# BELLDANDY_OPENAI_BASE_URL=http://127.0.0.1:11434/v1
+
+# 你的 API Key
+BELLDANDY_OPENAI_API_KEY=sk-proj-xxxxxxxxxxxxxxxx
+
+# 模型名称
+BELLDANDY_OPENAI_MODEL=gemini-2.0-flash-exp
+# 或者本地模型
+# BELLDANDY_OPENAI_MODEL=llama3
+BELLDANDY_OPENAI_MODEL=gemini-2.0-flash-exp
+# 或者本地模型
+# BELLDANDY_OPENAI_MODEL=llama3
+```
+
+> **✨ 也可以在网页界面设置！**
+>  Phase 2.5 版本新增了可视化配置面板。你只需要先运行起来（哪怕 Key 是空的），然后在网页右上角点击设置图标（⚙️）即可修改这些配置。
+>  修改后系统会自动重启生效。如果使用此方式，可以跳过手动编辑 `.env.local`。
+
+**方案 B：使用 Mock 模式（测试用）**
+如果你只是想跑通流程，不消耗 Token。
+
+```env
+BELLDANDY_AGENT_PROVIDER=mock
+```
+
+### 3.2 进阶配置（可选）
+
+将以下变量添加到 `.env.local` 中，按需启用或修改：
+
+```env
+# ------ 网络与安全 ------
+# Gateway 服务端口（默认 28889）
+BELLDANDY_PORT=28889
+
+# 鉴权模式：none (默认) | token | password
+# 注意：即使是 none，新设备连接也需要 Pairing 配对
+BELLDANDY_AUTH_MODE=none
+# BELLDANDY_AUTH_TOKEN=my-secret-token
+
+# ------ AI 能力开关 ------
+# 启用工具调用（联网、读写文件）
+BELLDANDY_TOOLS_ENABLED=true
+
+# 启用记忆检索（向量搜索）
+BELLDANDY_EMBEDDING_ENABLED=true
+# 向量模型配置（通常与 Chat 模型用同一家服务）
+BELLDANDY_EMBEDDING_MODEL=text-embedding-004
+
+# ------ 心跳定时任务 ------
+# 启用心跳（Agent 定期检查 HEARTBEAT.md 并主动联系你）
+BELLDANDY_HEARTBEAT_ENABLED=true
+# 心跳间隔（支持 30m, 1h, 300s 格式）
+BELLDANDY_HEARTBEAT_INTERVAL=30m
+# 活跃时段（可选，深夜不打扰）
+BELLDANDY_HEARTBEAT_ACTIVE_HOURS=08:00-23:00
+
+# ------ 日志系统 ------
+# 最低日志级别 (debug/info/warn/error)
+BELLDANDY_LOG_LEVEL=debug
+# 日志目录，默认 ~/.belldandy/logs
+# BELLDANDY_LOG_DIR=~/.belldandy/logs
+# 单文件最大大小，超过则轮转 (如 10MB)
+# BELLDANDY_LOG_MAX_SIZE=10MB
+# 日志保留天数，超过自动清理
+# BELLDANDY_LOG_RETENTION_DAYS=7
+# 是否输出到控制台 / 是否写入文件
+# BELLDANDY_LOG_CONSOLE=true
+# BELLDANDY_LOG_FILE=true
+```
+
+
+
+### 3.3 可视化配置 (Settings UI)
+
+如果你觉得编辑文本文件太麻烦，Belldandy 提供了全新的 Web 配置面板：
+
+1.  启动 Belldandy (`start.bat` 或 `./start.sh`)。
+2.  在 WebChat 界面右上角，点击 **⚙️ 设置图标**。
+3.  在弹出的面板中，你可以：
+    *   查看 **System Doctor** 诊断信息（检查 Node 版本、数据库状态、配置有效性）。
+    *   修改 **OpenAI API Key**、**Base URL**、**Model**。
+    *   修改 **心跳间隔**。
+4.  点击 **Save**，系统会自动保存配置到 `.env.local` 并重启服务。
+
+## 4. 启动与运行
+
+### 4.1 极速启动 (推荐)
+
+我们为 Windows 和 Linux/macOS 用户准备了“一键启动脚本”，它会自动完成以下所有工作：
+1. 检查 Node.js 环境
+2. 自动安装/更新依赖
+3. 启动 Gateway 服务
+4. **自动打开浏览器**并登录
+5. 如果服务意外崩溃，会自动尝试重启
+
+**Windows 用户**:
+双击项目根目录下的 `start.bat`。
+
+**macOS / Linux 用户**:
+在终端运行：
+```bash
+./start.sh
+```
+
+### 4.2 手动启动 (高级)
+
+如果你想更精细地控制启动过程（例如查看详细日志、调试），可以使用手动方式。
+
+在项目根目录运行：
+
+```bash
+# 进入项目目录
+cd Belldandy
+
+# 启动 (Windows 推荐使用 PowerShell)
+corepack pnpm dev:gateway
+```
+
+看到类似 `[Gateway] Listening on http://localhost:28889` 的日志，说明启动成功。
+
+### 4.3 访问界面
+
+打开浏览器，访问：
+http://localhost:28889/
+或者
+[http://127.0.0.1:28889/](http://127.0.0.1:28889/)
+
+> **✨ 首次唤醒仪式**：
+> 第一次由本机访问时，你可能会看到一段 **"Initializing..."** 的终端启动动画。这是 Belldandy 的唤醒仪式，稍等其自我检查完毕即可进入聊天界面。
+
+你会看到 WebChat 聊天界面。
+
+### 4.4 首次配对（Pairing）
+
+为了防止你家猫咪或邻居连上你的 AI，首次使用新设备（即使是本机浏览器）连接时，Belldandy 会启动安全配对流程：
+
+1.  在 WebChat 发送第一条消息（例如 "你好"）。
+2.  界面会提示：`Pairing required. Code: ABC123XY`。
+3.  回到**运行 Gateway 的终端**，开启一个新的终端窗口，执行批准命令：
+
+    ```bash
+    cd Belldandy
+    corepack pnpm pairing:approve ABC123XY
+    ```
+
+4.  回到 WebChat，再次发送消息，现在可以正常对话了。
+
+## 5. 个性化与记忆（让它变成你的专属 AI）
+
+Belldandy 的数据存储在你的用户主目录下的 `.belldandy` 文件夹中（例如 Windows 下是 `C:\Users\YourName\.belldandy`，Linux/Mac 下是 `~/.belldandy`）。
+
+### 5.1 塑造人格 (SOUL)
+
+你可以通过编辑 `.belldandy` 目录下的 Markdown 文件来定义 AI 的性格：
+
+-   **`SOUL.md`**：核心性格文件。
+    -   *例子*：`你是一个严谨的 TypeScript 专家，喜欢用代码解释问题...`
+-   **`IDENTITY.md`**：身份设定。
+    -   *例子*：`你的名字叫 Belldandy，是一级神，喜欢红茶...`
+-   **`USER.md`**：关于你的信息。
+    -   *例子*：`用户叫 vrboyzero，全栈工程师，喜欢简洁的代码...`
+
+修改这些文件后，**重启 Gateway** 即可生效。
+
+### 5.2 长期记忆 (Memory)
+
+Belldandy 会自动读取并索引 `.belldandy/MEMORY.md` 和 `.belldandy/memory/*.md` 文件。
+
+-   **`MEMORY.md`**：存放你希望它永远记住的关键事实。
+-   **`memory/2026-01-31.md`**：你可以手动记录当天的笔记，Belldandy 会自动索引并在相关对话中回忆起来。
+
+### 5.3 定时提醒 (Heartbeat)
+
+让 Belldandy 主动提醒你！编辑 `~/.belldandy/HEARTBEAT.md`：
+
+```markdown
+# 定时任务
+
+- [ ] 每天早上提醒我查看日程
+- [ ] 喝水提醒
+- [ ] 检查待办事项
+```
+
+当启用心跳功能后（`BELLDANDY_HEARTBEAT_ENABLED=true`），Belldandy 会定期读取这个文件：
+
+- **有任务内容**：执行检查并可能主动联系你
+- **文件为空**：跳过，节省 API 调用
+- **深夜时段**：如果设置了 `BELLDANDY_HEARTBEAT_ACTIVE_HOURS=08:00-23:00`，深夜不会打扰你
+
+> **注意**：心跳推送功能目前输出到日志，飞书推送正在开发中。
+
+### 5.4 日志系统 (Logs)
+
+Belldandy 的运行日志保存在 `~/.belldandy/logs/` 目录，支持：
+
+- **双输出**：同时输出到控制台和文件
+- **按日期分文件**：如 `gateway-2025-02-05.log`
+- **按大小轮转**：单文件超过设定大小（默认 10MB）自动切分
+- **自动清理**：超过保留天数（默认 7 天）的日志自动删除
+- **Agent 可读**：Agent 可通过 `log_read`、`log_search` 工具回溯日志，理解任务执行情况
+
+如需调整日志行为，可在 `.env.local` 中配置 `BELLDANDY_LOG_*` 相关变量（参见 3.2 进阶配置）。
+
+## 6. 管理命令
+
+Belldandy 提供了一套 CLI 工具来管理授权设备：
+
+-   **查看已授权列表**：
+    ```bash
+    cd Belldandy
+    corepack pnpm pairing:list
+    ```
+-   **查看待批准请求**：
+    ```bash
+    cd Belldandy
+    corepack pnpm pairing:pending
+    ```
+-   **清理过期请求**：
+    ```bash
+    cd Belldandy
+    corepack pnpm pairing:cleanup
+    ```
+-   **撤销某设备的授权**：
+    ```bash
+    cd Belldandy
+    corepack pnpm pairing:revoke <CLIENT_ID>
+    ```
+
+## 7. 飞书渠道（手机可用）
+
+除了 WebChat，你还可以通过飞书与 Belldandy 对话——无需公网 IP 或内网穿透！
+
+### 7.1 配置飞书
+
+详细配置步骤请参考 [飞书对接说明](./Belldandy飞书对接说明.md)。
+
+简要步骤：
+1. 在 [飞书开放平台](https://open.feishu.cn/) 创建企业自建应用
+2. 获取 App ID 和 App Secret
+3. 开启机器人能力并配置权限
+4. 设置事件订阅为"长连接模式"
+5. 发布应用
+
+### 7.2 配置 Belldandy
+
+在 `.env.local` 中添加：
+
+```env
+BELLDANDY_FEISHU_APP_ID=cli_xxxxxxxxxxxxxxxx
+BELLDANDY_FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+### 7.3 使用
+
+1. 启动 Gateway：`corepack pnpm dev:gateway`
+2. 终端显示 `Feishu WebSocket Channel started.` 和 `ws client ready` 说明连接成功
+3. 打开飞书，搜索你的应用名称，开始对话！
+
+### 7.4 渠道架构说明
+
+Belldandy 采用了标准化的 **Channel 接口** 设计，使扩展新渠道变得简单：
+
+- **统一接口**：所有渠道（飞书、Telegram、Discord 等）都实现相同的 `Channel` 接口
+- **ChannelManager**：统一管理多个渠道的启动、停止和消息广播
+- **易于扩展**：新增渠道只需实现 `start()`、`stop()`、`sendProactiveMessage()` 方法
+
+**当前已支持的渠道**：
+- ✅ 飞书 (FeishuChannel) - 已完整实现
+
+**计划中的渠道**：
+- ⏳ Telegram
+- ⏳ Discord
+- ⏳ Slack
+
+> **开发者注意**：如果你想贡献新渠道实现，请参考 `packages/belldandy-channels/src/types.ts` 中的 `Channel` 接口定义。
+
+
+## 8. 浏览器自动化
+
+让 Belldandy 控制你的浏览器打开网页、截图或提取内容的黑科技功能！
+
+### 8.1 启用方式
+
+**推荐：自动启动**
+
+在 `.env.local` 中添加：
+
+```env
+# 启用浏览器中继自动启动
+BELLDANDY_BROWSER_RELAY_ENABLED=true
+```
+
+下次启动 Gateway 时，后台会自动运行 Relay Server。
+
+**手动启动（备选）**
+
+如果你想单独调试，可以手动运行：
+
+```bash
+cd Belldandy
+node packages/belldandy-browser/dist/bin/relay.js
+```
+
+### 8.2 安装浏览器扩展
+
+1.  打开 Chrome 浏览器，进入 **扩展管理页面** (`chrome://extensions`)。
+2.  开启右上角的 **"开发者模式" (Developer mode)**。
+3.  点击 **"加载已解压的扩展程序" (Load unpacked)**。
+4.  选择项目目录下的 `apps/browser-extension` 文件夹。
+
+### 8.3 连接使用
+
+1.  在浏览器右上角找到 **Belldandy Relay** 的图标（一个紫色的小幽灵👻或 B 图标）。
+2.  点击它，图标应该会变色或显示 "Connected"，表示已连接到 Relay Server。
+3.  现在的 Agent 就可以通过 `browser_open` 等工具控制你的当前浏览器了！
+
+## 9. 视觉感知 (Loopback Vision)
+
+让 Belldandy 拥有“眼睛”，可以看到你通过宿主机 webcam 看到的画面。
+
+### 9.1 原理简介 (Loopback Vision)
+
+这是一种“回环视觉”技术：
+1.  Agent 指挥浏览器打开一个镜像页面（Mirror Page）。
+2.  该页面调用你的本地摄像头显示画面。
+3.  Agent 对该页面进行截图，从而“看到”了画面。
+
+### 9.2 如何使用
+
+**前提条件**：必须先完成 **8. 浏览器自动化** 的连接步骤（安装插件并连接）。
+
+#### 方法 A：使用内置技能 (推荐)
+
+直接对 Belldandy 说：
+
+> **"拍张照"** 或 **"看看我现在在哪"** 或 **"启动视觉"**
+
+Agent 会自动调用 `camera_snap` 工具：
+1.  自动打开 `/mirror.html` 页面。
+2.  **关键步骤**：此时浏览器会弹窗提示“允许使用摄像头？”，**请务必点击【允许】**。
+3.  等待 2 秒（你可以调整姿势）。
+4.  完成拍摄并进行分析。
+
+#### 方法 B：手动操作 (硬核模式)
+
+## 10. 方法论系统 (Methodology System)
+
+这是 Belldandy 的"程序性记忆"核心。它允许 Agent 将一次性的经验沉淀为标准操作流程 (SOP)，并在后续任务中自动调用。
+
+### 10.1 核心理念
+- **查阅优先**: 在执行复杂任务前，Agent 会先检查是否有现成的方法 (`method_list/search`).
+- **经验沉淀**: 任务成功或踩坑后，Agent 会将经验记录为 Markdown 文件 (`method_create`).
+- **自我进化**: 随着使用时间的增加，`methods/` 目录下的 SOP 越多，Agent 越聪明。
+
+### 10.2 常用工具
+- `method_list`: 列出所有已沉淀的方法。
+- `method_search`: 搜索特定关键词的方法。
+- `method_read`: 读取方法的具体步骤。
+- `method_create`: 创建或更新方法文档。
+
+### 10.3 给用户的建议
+- 您可以在对话中显式要求 Belldandy："把刚才的操作总结为一个方法保存下来。"
+- 您也可以手动在 `~/.belldandy/methods/` 目录下编写 `.md` 文件，教 Belldandy 做事。
+
+## 11. 插件与钩子系统 (Plugin & Hook System)
+
+Belldandy 提供了完整的插件系统，允许开发者扩展 Agent 的能力。
+
+### 11.1 钩子系统
+
+钩子是插件干预 Agent 行为的核心机制。Belldandy 支持 **13 种生命周期钩子**：
+
+| 类别 | 钩子名称 | 用途 |
+|------|---------|------|
+| **Agent** | `before_agent_start` | 在 Agent 开始前注入系统提示词或上下文 |
+| **Agent** | `agent_end` | Agent 完成后分析对话、记录日志 |
+| **消息** | `message_received` | 收到消息时触发（日志/触发器） |
+| **消息** | `message_sending` | 发送前修改或取消消息 |
+| **消息** | `message_sent` | 消息发送后触发（日志） |
+| **工具** | `before_tool_call` | 工具调用前修改参数或阻止执行 |
+| **工具** | `after_tool_call` | 工具调用后结果审计 |
+| **会话** | `session_start` / `session_end` | 会话开始/结束时触发 |
+| **网关** | `gateway_start` / `gateway_stop` | 服务启动/停止时触发 |
+
+### 11.2 开发插件
+
+插件是一个导出 `activate(context)` 方法的 JS/MJS 文件：
+
+```javascript
+// my-plugin.mjs
+export const id = "my-plugin";
+export const name = "My Plugin";
+
+export function activate(context) {
+  // 注册钩子
+  context.hooks.register({
+    source: id,
+    hookName: "before_tool_call",
+    priority: 10, // 优先级越高越先执行
+    handler: (event, ctx) => {
+      console.log(`工具调用: ${event.toolName}`);
+      // 返回 { block: true } 可阻止执行
+      // 返回 { params: {...} } 可修改参数
+    }
+  });
+
+  // 注册新工具
+  context.tools.register({
+    name: "my_tool",
+    description: "我的自定义工具",
+    execute: async (params) => {
+      return { success: true, output: "Hello from my tool!" };
+    }
+  });
+}
+```
+
+### 11.3 加载插件
+
+将插件文件放到 `~/.belldandy/plugins/` 目录下，Gateway 启动时会自动加载。
+
+## 12. MCP 支持 (Model Context Protocol)
+
+MCP 是 Anthropic 提出的标准化协议，让 AI 助手能够连接外部数据源和工具。
+
+### 12.1 启用 MCP
+
+在 `.env.local` 中添加：
+
+```env
+# 启用 MCP 支持（需要同时启用工具系统）
+BELLDANDY_TOOLS_ENABLED=true
+BELLDANDY_MCP_ENABLED=true
+```
+
+### 12.2 配置 MCP 服务器
+
+在 `~/.belldandy/mcp.json` 中定义要连接的 MCP 服务器：
+
+```json
+{
+  "version": "1.0.0",
+  "servers": [
+    {
+      "id": "filesystem",
+      "name": "文件系统",
+      "description": "提供文件系统访问能力",
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/documents"]
+      },
+      "autoConnect": true,
+      "enabled": true
+    },
+    {
+      "id": "github",
+      "name": "GitHub",
+      "description": "GitHub API 访问",
+      "transport": {
+        "type": "stdio",
+        "command": "npx",
+        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "env": {
+          "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxxxxxxxxxxx"
+        }
+      },
+      "autoConnect": true,
+      "enabled": true
+    }
+  ],
+  "settings": {
+    "defaultTimeout": 30000,
+    "debug": false,
+    "toolPrefix": true
+  }
+}
+```
+
+### 12.3 传输类型
+
+| 类型 | 说明 | 适用场景 |
+|------|------|----------|
+| `stdio` | 通过子进程的 stdin/stdout 通信 | 本地 MCP 服务器（推荐） |
+| `sse` | 通过 HTTP Server-Sent Events 通信 | 远程 MCP 服务器 |
+
+### 12.4 常用 MCP 服务器
+
+| 服务器 | 命令 | 功能 |
+|--------|------|------|
+| `@modelcontextprotocol/server-filesystem` | `npx -y @modelcontextprotocol/server-filesystem /path` | 文件系统访问 |
+| `@modelcontextprotocol/server-github` | `npx -y @modelcontextprotocol/server-github` | GitHub API |
+| `@modelcontextprotocol/server-sqlite` | `npx -y @modelcontextprotocol/server-sqlite` | SQLite 数据库 |
+| `@modelcontextprotocol/server-puppeteer` | `npx -y @modelcontextprotocol/server-puppeteer` | 浏览器自动化 |
+
+### 12.5 工具命名
+
+MCP 工具在 Belldandy 中的命名格式为：`mcp_{serverId}_{toolName}`
+
+例如：
+- `mcp_filesystem_read_file` - 文件系统服务器的读取文件工具
+- `mcp_github_create_issue` - GitHub 服务器的创建 Issue 工具
+
+> **💡 提示**：启动 Gateway 后，日志会显示已连接的 MCP 服务器和注册的工具数量。
+
+如果你想体验控制感，可以手动指挥 Agent：
+
+1.  **"打开镜像页"** -> Agent 导航至 `http://.../mirror.html`。
+2.  **"允许摄像头"** -> 你手动在浏览器点击允许。
+3.  **"现在截图"** -> Agent 截图并分析。
+
+---
+
+## 13. 语音交互 (Voice Interaction)
+
+让 Belldandy 开口说话！支持免费且高质量的 Edge TTS（微软晓晓/云希）。
+
+### 13.1 快速开启/关闭
+
+无需配置复杂文件，直接在对话中对 Agent 说：
+
+*   **开启语音**：对它说 "开启语音模式" 或 "我想听你说话"。
+    *   Agent 会自动进入 TTS 模式，每条回复都会附带语音播放器。
+*   **关闭语音**：对它说 "关闭语音" 或 "太吵了"。
+    *   Agent 会立即停止生成音频。
+
+> **原理**：Agent 会在你的工作区目录创建/删除一个名为 `TTS_ENABLED` 的信号文件。
+
+### 13.2 进阶配置
+
+默认使用 **Edge TTS**（免费）。如果你想使用 **OpenAI TTS**（付费但声线不同），可以通过调用工具时指定参数，或者让 Agent 帮你设置。
+
+**支持的声音（Edge TTS - 推荐）**：
+*   `zh-CN-XiaoxiaoNeural` (晓晓 - 温暖女声)
+*   `zh-CN-YunxiNeural` (云希 - 干练男声)
+*   `en-US-AriaNeural` (Aria - 通用女声)
+
+---
+
+## 14. 常见问题 (FAQ)
+
+**Q: 启动时提示 `EADDRINUSE` 端口被占用？**
+A: 说明端口 28889 已经被占用了。你可以修改 `.env.local` 中的 `BELLDANDY_PORT=28890` 换一个端口。
+
+**Q: 如何让从外网访问？**
+A: Belldandy 默认监听 `0.0.0.0`，在局域网内可以直接通过 IP 访问（需要配对）。若要公网访问，建议使用 Cloudflare Tunnel 或 Frp 等内网穿透工具，并务必开启 `BELLDANDY_AUTH_MODE=token` 增加安全性。
+
+**Q: 记忆检索有时候不准？**
+A: 目前使用的是混合检索（关键词+向量）。请确保你的 `.env.local` 中正确配置了 Embedding 模型，且 `BELLDANDY_EMBEDDING_ENABLED=true`。
+
+**Q: Windows 下可以执行 CMD 命令吗？**
+A: 可以。Belldandy 已对 Windows 原生命令 (`copy`, `move`, `del`, `ipconfig` 等) 进行了特别支持。注意：为了安全起见，`del` 命令禁止使用 `/s` (递归) 或 `/q` (静默) 参数。
+
+---
+*Belldandy - Your Personal AI Assistant*

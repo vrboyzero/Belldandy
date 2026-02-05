@@ -1,0 +1,424 @@
+import { DatabaseSync } from "node:sqlite";
+import { vectorToBuffer, vectorFromBuffer } from "./embeddings/index.js";
+import { loadSqliteVec } from "./sqlite-vec.js";
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS chunks (
+  id TEXT PRIMARY KEY,
+  source_path TEXT NOT NULL,
+  source_type TEXT NOT NULL,
+  memory_type TEXT NOT NULL DEFAULT 'other',
+  start_line INTEGER,
+  end_line INTEGER,
+  content TEXT NOT NULL,
+  metadata TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source_path);
+CREATE INDEX IF NOT EXISTS idx_chunks_updated ON chunks(updated_at);
+
+-- FTS5 全文索引
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+  content,
+  content='chunks',
+  content_rowid='rowid',
+  tokenize='unicode61'
+);
+
+-- 触发器：同步 FTS 索引
+CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+  INSERT INTO chunks_fts(rowid, content) VALUES (NEW.rowid, NEW.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+  INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES('delete', OLD.rowid, OLD.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+  INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES('delete', OLD.rowid, OLD.content);
+  INSERT INTO chunks_fts(rowid, content) VALUES (NEW.rowid, NEW.content);
+END;
+
+-- Embedding 缓存表（避免重复计算相同内容）
+CREATE TABLE IF NOT EXISTS embedding_cache (
+  content_hash TEXT PRIMARY KEY,
+  embedding BLOB NOT NULL,
+  dimensions INTEGER NOT NULL,
+  model TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+-- 元信息表
+CREATE TABLE IF NOT EXISTS meta (
+  key TEXT PRIMARY KEY,
+  value TEXT
+);
+`;
+export class MemoryStore {
+    db;
+    closed = false;
+    vecDims = null;
+    constructor(dbPath) {
+        this.db = new DatabaseSync(dbPath, { allowExtension: true });
+        loadSqliteVec(this.db);
+        this.db.exec(SCHEMA);
+    }
+    /** 插入或更新 chunk */
+    upsertChunk(chunk) {
+        this.ensureOpen();
+        const now = new Date().toISOString();
+        const stmt = this.db.prepare(`
+      INSERT INTO chunks (id, source_path, source_type, memory_type, start_line, end_line, content, metadata, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        content = excluded.content,
+        metadata = excluded.metadata,
+        updated_at = excluded.updated_at,
+        memory_type = excluded.memory_type
+    `);
+        stmt.run(chunk.id, chunk.sourcePath, chunk.sourceType, chunk.memoryType, chunk.startLine ?? null, chunk.endLine ?? null, chunk.content, JSON.stringify(chunk.metadata ?? {}), now, now);
+    }
+    /** 按来源路径删除 chunks */
+    deleteBySource(sourcePath) {
+        this.ensureOpen();
+        // 先查出要删除的 rowid，同步删除 vec 数据
+        const rows = this.db.prepare(`SELECT rowid FROM chunks WHERE source_path = ?`).all(sourcePath);
+        if (rows.length > 0 && this.vecDims) {
+            // vec0 删除需要 rowid
+            // 为了性能，可以使用事务或 batch
+            const vecDelete = this.db.prepare(`DELETE FROM chunks_vec WHERE rowid = ?`);
+            for (const row of rows) {
+                vecDelete.run(BigInt(row.rowid));
+            }
+        }
+        const stmt = this.db.prepare(`DELETE FROM chunks WHERE source_path = ?`);
+        const result = stmt.run(sourcePath);
+        return Number(result.changes);
+    }
+    /** 删除所有 chunks */
+    deleteAll() {
+        this.ensureOpen();
+        if (this.vecDims) {
+            try {
+                this.db.exec(`DELETE FROM chunks_vec`);
+            }
+            catch (e) {
+                // Ignore if table doesn't exist
+            }
+        }
+        const stmt = this.db.prepare(`DELETE FROM chunks`);
+        const result = stmt.run();
+        return Number(result.changes);
+    }
+    /** 关键词搜索 */
+    searchKeyword(query, limit = 10) {
+        this.ensureOpen();
+        // 构建 FTS5 查询
+        const ftsQuery = buildFtsQuery(query);
+        if (!ftsQuery)
+            return [];
+        try {
+            const stmt = this.db.prepare(`
+        SELECT
+          c.id, c.source_path, c.source_type, c.memory_type, c.start_line, c.end_line,
+          c.content, c.metadata,
+          bm25(chunks_fts) as rank
+        FROM chunks_fts f
+        JOIN chunks c ON c.rowid = f.rowid
+        WHERE chunks_fts MATCH ?
+        ORDER BY rank
+        LIMIT ?
+      `);
+            const rows = stmt.all(ftsQuery, limit);
+            return rows.map((row) => ({
+                id: row.id,
+                sourcePath: row.source_path,
+                sourceType: row.source_type,
+                memoryType: row.memory_type,
+                startLine: row.start_line ?? undefined,
+                endLine: row.end_line ?? undefined,
+                snippet: truncateContent(row.content, 500),
+                score: bm25RankToScore(row.rank),
+                metadata: safeParseJson(row.metadata),
+            }));
+        }
+        catch (err) {
+            // FTS 查询语法错误时返回空结果
+            console.error("FTS query error:", err);
+            return [];
+        }
+    }
+    /** 获取文件元数据（用于增量检查） */
+    getFileMetadata(sourcePath) {
+        this.ensureOpen();
+        const stmt = this.db.prepare(`
+      SELECT updated_at, metadata 
+      FROM chunks 
+      WHERE source_path = ? 
+      ORDER BY updated_at DESC 
+      LIMIT 1
+    `);
+        const row = stmt.get(sourcePath);
+        if (!row)
+            return null;
+        return {
+            updatedAt: row.updated_at,
+            metadata: safeParseJson(row.metadata),
+        };
+    }
+    /** 获取索引状态 */
+    getStatus() {
+        this.ensureOpen();
+        const filesStmt = this.db.prepare(`SELECT COUNT(DISTINCT source_path) as count FROM chunks`);
+        const filesRow = filesStmt.get();
+        const chunksStmt = this.db.prepare(`SELECT COUNT(*) as count FROM chunks`);
+        const chunksRow = chunksStmt.get();
+        const metaStmt = this.db.prepare(`SELECT value FROM meta WHERE key = 'last_indexed_at'`);
+        const metaRow = metaStmt.get();
+        return {
+            files: filesRow.count,
+            chunks: chunksRow.count,
+            lastIndexedAt: metaRow?.value,
+        };
+    }
+    /** 更新最后索引时间 */
+    updateLastIndexedAt() {
+        this.ensureOpen();
+        const now = new Date().toISOString();
+        const stmt = this.db.prepare(`
+      INSERT INTO meta (key, value) VALUES ('last_indexed_at', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `);
+        stmt.run(now);
+    }
+    /** 关闭数据库连接 */
+    close() {
+        if (!this.closed) {
+            this.db.close();
+            this.closed = true;
+        }
+    }
+    // ========== 向量存储方法 ==========
+    ensureVectorTable(dimensions) {
+        if (this.vecDims === dimensions)
+            return;
+        // 检查表是否存在
+        const tableExists = this.db.prepare(`SELECT count(*) as c FROM sqlite_master WHERE type='table' AND name='chunks_vec'`).get();
+        if (tableExists.c === 0) {
+            this.db.exec(`
+        CREATE VIRTUAL TABLE chunks_vec USING vec0(
+          embedding float[${dimensions}]
+        )
+      `);
+            this.vecDims = dimensions;
+        }
+        else {
+            // 假设已存在同名表，我们沿用（忽略维度检查）
+            this.vecDims = dimensions;
+        }
+    }
+    /**
+     * 存储 chunk 的 embedding 向量
+     */
+    upsertChunkVector(chunkId, embedding, model) {
+        this.ensureOpen();
+        const dimensions = embedding.length;
+        this.ensureVectorTable(dimensions);
+        // 获取 chunk 的 rowid
+        const chunkRow = this.db.prepare(`SELECT rowid FROM chunks WHERE id = ?`).get(chunkId);
+        if (!chunkRow) {
+            // 可能 chunk 还没插入？或者已被删除。
+            // 一般来说调用方应该先 upsertChunk。
+            return;
+        }
+        const blob = vectorToBuffer(embedding);
+        // vec0 表不支持 upsert (ON CONFLICT)，所以先删除旧的（如果存在），再插入
+        // 或者直接 DELETE + INSERT (rowid 不变)
+        this.db.prepare(`DELETE FROM chunks_vec WHERE rowid = ?`).run(BigInt(chunkRow.rowid));
+        this.db.prepare(`INSERT INTO chunks_vec(rowid, embedding) VALUES (?, ?)`).run(BigInt(chunkRow.rowid), blob);
+    }
+    /**
+     * 获取 chunk 的 embedding 向量
+     */
+    getChunkVector(chunkId) {
+        this.ensureOpen();
+        if (!this.vecDims)
+            return null;
+        const chunkRow = this.db.prepare(`SELECT rowid FROM chunks WHERE id = ?`).get(chunkId);
+        if (!chunkRow)
+            return null;
+        try {
+            const stmt = this.db.prepare(`SELECT embedding FROM chunks_vec WHERE rowid = ?`);
+            const row = stmt.get(BigInt(chunkRow.rowid));
+            if (!row)
+                return null;
+            return vectorFromBuffer(row.embedding);
+        }
+        catch {
+            return null;
+        }
+    }
+    /**
+     * 缓存 embedding（按内容 hash）
+     */
+    cacheEmbedding(contentHash, embedding, model) {
+        this.ensureOpen();
+        const now = new Date().toISOString();
+        const blob = vectorToBuffer(embedding);
+        const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO embedding_cache (content_hash, embedding, dimensions, model, created_at)
+      VALUES (?, ?, ?, ?, ?)
+    `);
+        stmt.run(contentHash, blob, embedding.length, model, now);
+    }
+    /**
+     * 从缓存获取 embedding
+     */
+    getCachedEmbedding(contentHash) {
+        this.ensureOpen();
+        const stmt = this.db.prepare(`SELECT embedding FROM embedding_cache WHERE content_hash = ?`);
+        const row = stmt.get(contentHash);
+        if (!row)
+            return null;
+        return vectorFromBuffer(row.embedding);
+    }
+    /**
+     * 向量搜索：返回与查询向量最相似的 chunks
+     */
+    searchVector(queryVec, limit = 10) {
+        this.ensureOpen();
+        if (!this.vecDims)
+            return [];
+        const blob = vectorToBuffer(queryVec);
+        // sqlite-vec KNN search
+        const stmt = this.db.prepare(`
+        SELECT
+            c.id, c.source_path, c.source_type, c.memory_type, c.start_line, c.end_line,
+            c.content, c.metadata,
+            v.distance
+        FROM chunks_vec v
+        JOIN chunks c ON c.rowid = v.rowid
+        WHERE v.embedding MATCH ? AND k = ?
+        ORDER BY v.distance
+    `);
+        const rows = stmt.all(blob, limit);
+        return rows.map((row) => ({
+            id: row.id,
+            sourcePath: row.source_path,
+            sourceType: row.source_type,
+            memoryType: row.memory_type,
+            startLine: row.start_line ?? undefined,
+            endLine: row.end_line ?? undefined,
+            snippet: truncateContent(row.content, 500),
+            // 简单转换距离为分数，假设距离是 L2 距离
+            score: 1 / (1 + row.distance),
+            metadata: safeParseJson(row.metadata),
+        }));
+    }
+    /**
+     * 混合搜索：结合关键词（BM25）和向量（语义）搜索
+     */
+    searchHybrid(query, queryVec, options = {}) {
+        const { limit = 10, vectorWeight = 0.7, textWeight = 0.3 } = options;
+        // 获取关键词搜索结果
+        const keywordResults = this.searchKeyword(query, limit * 2);
+        // 如果没有向量，只返回关键词结果
+        if (!queryVec || queryVec.length === 0) {
+            return keywordResults.slice(0, limit);
+        }
+        // 获取向量搜索结果
+        const vectorResults = this.searchVector(queryVec, limit * 2);
+        // 合并结果（使用 RRF - Reciprocal Rank Fusion）
+        const scoreMap = new Map();
+        // 添加关键词结果的权重
+        keywordResults.forEach((result, rank) => {
+            const rrf = textWeight / (rank + 60);
+            const existing = scoreMap.get(result.id);
+            if (existing) {
+                existing.score += rrf;
+            }
+            else {
+                scoreMap.set(result.id, { result, score: rrf });
+            }
+        });
+        // 添加向量结果的权重
+        vectorResults.forEach((result, rank) => {
+            const rrf = vectorWeight / (rank + 60);
+            const existing = scoreMap.get(result.id);
+            if (existing) {
+                existing.score += rrf;
+            }
+            else {
+                scoreMap.set(result.id, { result, score: rrf });
+            }
+        });
+        // 按融合分数排序
+        const merged = Array.from(scoreMap.values())
+            .sort((a, b) => b.score - a.score)
+            .slice(0, limit)
+            .map(({ result, score }) => ({
+            ...result,
+            score,
+        }));
+        return merged;
+    }
+    /**
+     * 获取向量索引状态
+     */
+    getVectorStatus() {
+        this.ensureOpen();
+        let indexed = 0;
+        try {
+            const row = this.db.prepare(`SELECT COUNT(*) as count FROM chunks_vec`).get();
+            indexed = row.count;
+        }
+        catch {
+            // table might not exist
+        }
+        const cachedStmt = this.db.prepare(`SELECT COUNT(*) as count FROM embedding_cache`);
+        const cachedRow = cachedStmt.get();
+        // vec0 doesn't store model name, we might lose this info unless we store it elsewhere.
+        // For now return undefined or fix meta.
+        return {
+            indexed,
+            cached: cachedRow.count,
+        };
+    }
+    ensureOpen() {
+        if (this.closed) {
+            throw new Error("MemoryStore already closed");
+        }
+    }
+}
+/** 构建 FTS5 查询字符串 */
+function buildFtsQuery(raw) {
+    const tokens = raw.match(/[A-Za-z0-9_\u4e00-\u9fa5]+/g)?.filter(Boolean) ?? [];
+    if (tokens.length === 0)
+        return null;
+    return tokens.map((t) => `"${t.replace(/"/g, "")}"`).join(" AND ");
+}
+/** BM25 rank 转换为 0-1 分数（rank 越小越好） */
+function bm25RankToScore(rank) {
+    const normalized = Number.isFinite(rank) ? Math.abs(rank) : 0;
+    return Math.min(1, normalized / 10);
+}
+/** 截断内容 */
+function truncateContent(content, maxLen) {
+    if (content.length <= maxLen)
+        return content;
+    return content.slice(0, maxLen) + "...";
+}
+/** 安全解析 JSON */
+function safeParseJson(str) {
+    if (!str)
+        return undefined;
+    try {
+        const parsed = JSON.parse(str);
+        return typeof parsed === "object" && parsed !== null ? parsed : undefined;
+    }
+    catch {
+        return undefined;
+    }
+}
+//# sourceMappingURL=store.js.map

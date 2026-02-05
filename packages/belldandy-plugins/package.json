@@ -1,0 +1,21 @@
+{
+    "name": "@belldandy/plugins",
+    "version": "0.0.0",
+    "private": true,
+    "main": "dist/index.js",
+    "types": "dist/index.d.ts",
+    "type": "module",
+    "scripts": {
+        "build": "tsc -b",
+        "clean": "rm -rf dist tsconfig.tsbuildinfo"
+    },
+    "dependencies": {
+        "@belldandy/agent": "workspace:*",
+        "@belldandy/skills": "workspace:*",
+        "@belldandy/protocol": "workspace:*"
+    },
+    "devDependencies": {
+        "@types/node": "^22.0.0",
+        "typescript": "^5.6.3"
+    }
+}
