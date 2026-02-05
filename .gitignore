@@ -5,7 +5,7 @@ node_modules/
 .pnpm-store/
 
 # Build outputs
-/dist/
+dist/
 /build/
 /out/
 /.next/
