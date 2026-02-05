@@ -198,6 +198,7 @@ corepack pnpm dev:gateway
 ## 配置指南
 
 在项目根目录创建 `.env.local` 文件（Git 会自动忽略）。
+可以参考仓库中的 `.env.example` 填写必需的配置项。
 
 ### 基础配置（必选）
 
