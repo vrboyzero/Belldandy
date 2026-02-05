@@ -21,8 +21,8 @@
 
 -   找到 **App ID** 和 **App Secret**。
 -   👀 **请记下这两个值**，稍后我们配置 Belldandy 时需要用到。
-test App ID:cli_a9f5a7362838dbd9
-App Secret:V7uVxVTVdw2EBhaXUXVBXcM0m45j4dcq
+test App ID:XXX
+App Secret:XXX
 ## 3. 开启机器人能力
 
 1.  在左侧菜单点击 **“应用功能” -> “机器人”**。
