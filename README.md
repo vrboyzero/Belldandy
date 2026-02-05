@@ -1,6 +1,11 @@
 # Belldandy
 
 <p align="center">
+  <a href="./README.md"><b>简体中文</b></a> |
+  <a href="./README.en.md">English</a>
+</p>
+
+<p align="center">
   <strong>🌟 本地优先的个人 AI 助手</strong><br>
   在你自己的设备上运行，通过多种聊天渠道为你服务
 </p>
@@ -522,8 +527,6 @@ apps/
 
 ### 相关文档
 
-- [PRD.md](./PRD.md) - 产品需求文档
-- [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) - 实施计划与里程碑
 - [Belldandy实现内容说明.md](./Belldandy实现内容说明.md) - 详细功能说明
 - [Belldandy使用手册.md](./Belldandy使用手册.md) - 完整使用指南
 
