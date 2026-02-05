@@ -48,8 +48,8 @@ App Secret:V7uVxVTVdw2EBhaXUXVBXcM0m45j4dcq
 1.  在 Belldandy 项目根目录下创建或编辑 `.env` 文件。
 2.  添加以下配置（替换为你实际获取的值）：
     ```bash
-    BELLDANDY_FEISHU_APP_ID=cli_a9f5a7362838dbd9    # 你的 App ID
-    BELLDANDY_FEISHU_APP_SECRET=V7uVxVTVdw2EBhaXUXVBXcM0m45j4dcq   # 你的 App Secret
+    BELLDANDY_FEISHU_APP_ID=XXX    # 你的 App ID
+    BELLDANDY_FEISHU_APP_SECRET=XXX   # 你的 App Secret
     ```
 3.  保存文件。
 
