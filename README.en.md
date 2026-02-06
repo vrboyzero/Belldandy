@@ -350,9 +350,65 @@ Runtime logs are stored in `~/.belldandy/logs/`.
 
 See `BELLDANDY_LOG_*` variables for configuration.
 
+### Methodology System (Methods)
+
+> Tools define what the Agent is able to do; methods define how it should do those things in the future.
+
+On top of a standard skills/tooling system, Belldandy adds a **Methodology System** designed specifically for **long‑memory, long‑term companion Agents**. It consists of four parts:
+
+- **Agent**: The decision‑making layer shaped by workspace files like `SOUL.md`, `AGENTS.md`, `USER.md`, and `TOOLS.md`.
+- **Skills**: The concrete tools that perform actions (file I/O, web fetch, browser control, shell commands, memory search, etc.).
+- **Methods**: Markdown SOP documents under `~/.belldandy/methods/`, acting as the Agent’s "how‑to" memory, managed via `method_list`, `method_read`, and `method_create`.
+- **Logs**: Structured runtime logs under `~/.belldandy/logs/*.log`, which the Agent can read with `log_read` / `log_search` to review executions, errors, and performance.
+
+These four pieces form a closed loop so the Agent doesn’t just "rethink from scratch next time" but gradually grows its own methodology:
+
+- **Before: look up methods instead of improvising**
+  - For complex tasks (deployments, system configuration, multi‑file refactors, external integrations, etc.):
+    - Use `method_list` to see if there is already a relevant method.
+    - Use `method_read` to load the SOP and follow the steps.
+    - If there is no method yet, treat this as a "first‑time exploration" and freely combine skills to solve it.
+- **During: every attempt leaves a factual trace**
+  - Each tool call, error, slow query, and heartbeat run is logged to `~/.belldandy/logs/YYYY-MM-DD.log` with timestamp, module, level, argument summary, and duration.
+  - The Agent can use `log_read` / `log_search` at any time to inspect which steps failed, which calls were slow, and whether certain errors repeat.
+- **After: turn logs into methods and capture experience**
+  - Once a task is solved (even after many failures), the Agent can:
+    - Use `log_search` to replay the errors and fixes from that time window.
+    - Distill a stable, reusable procedure.
+    - Use `method_create` to write a method document (for example, `Feishu-connection-debug.md` or `Project-deploy-basic.md`) with context, steps, skills used, and common pitfalls.
+- **Next time: start from methods, then fine‑tune**
+  - When a similar task appears again:
+    - Start with `method_list` / `method_read` to load the relevant method.
+    - Adjust on top of the SOP instead of repeating the full "trial → debug → success" cycle.
+    - If the environment changed and new issues appear, update the method based on logs so the SOP evolves with reality.
+
+**In short:**
+
+- **Skills** define what the Agent *can* do.
+- **Logs** record what it *actually* did.
+- **Methods** capture how it *should* do things next time.
+- **Agent** loops through these three, evolving from "tool‑user" into a long‑term partner with its own way of doing things.
+
+**Key benefits: Automation, continuous improvement, and composability for long‑memory Agents**
+
+- **Automation**:
+  - Repetitive business workflows no longer rely on ad‑hoc prompts; they are written as versioned SOPs (methods) and executed repeatedly via heartbeat (`HEARTBEAT.md`) or explicit tasks.
+  - Updating a method document is effectively shipping a new version of the automation pipeline — the next run follows the new process.
+
+- **Continuous improvement**:
+  - Every failure/debugging session is logged; the Agent can aggregate errors with `log_search` and then use `method_create` to encode the lessons into methods.
+  - Updating methods changes the Agent’s default behavior for that scenario, making it more stable and efficient on the same machine and project over time.
+
+- **Composability**:
+  - Each method document is a reusable "business brick" (for example, "1688 sourcing", "Amazon listing", "daily monitoring").
+  - More complex revenue‑generating or operations workflows can then be defined as pipeline‑style methods that compose these bricks, instead of rebuilding everything from raw skills each time.
+
+> For a concrete Chinese example of an end‑to‑end workflow (sourcing from 1688 and continuously listing on Amazon), and how methods integrate with heartbeat and the logging system to run the pipeline, see [`Methods方法论示例与说明.md`](./Methods方法论示例与说明.md).
+
 ---
 
 ## Feishu (Lark) Integration
+
 
 Talk to Belldandy via Feishu without exposing your machine to the internet.
 
