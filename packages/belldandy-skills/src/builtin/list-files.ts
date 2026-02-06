@@ -15,27 +15,50 @@ function isDeniedPath(relativePath: string, deniedPaths: string[]): string | nul
     return null;
 }
 
-/** 规范化并验证路径在工作区内 */
+/** 检查路径是否在指定根目录下（不越界） */
+function isUnderRoot(absolute: string, root: string): { ok: true; relative: string } | { ok: false } {
+    const resolvedRoot = path.resolve(root);
+    const rel = path.relative(resolvedRoot, absolute);
+    if (rel.startsWith("..") || path.isAbsolute(rel)) return { ok: false };
+    return { ok: true, relative: rel.replace(/\\/g, "/") };
+}
+
+/** 规范化并验证路径在工作区内（主工作区或 extraWorkspaceRoots 中的任一根目录下）；返回匹配的根目录供列目录时计算相对路径用 */
 function resolveAndValidatePath(
-    relativePath: string,
-    workspaceRoot: string
-): { ok: true; absolute: string; relative: string } | { ok: false; error: string } {
-    const normalized = relativePath.replace(/\\/g, "/");
-
-    // 禁止绝对路径
-    if (path.isAbsolute(normalized)) {
-        return { ok: false, error: "禁止使用绝对路径，请使用相对于工作区的路径" };
+    pathArg: string,
+    workspaceRoot: string,
+    extraWorkspaceRoots?: string[]
+): { ok: true; absolute: string; relative: string; effectiveRoot: string } | { ok: false; error: string } {
+    const trimmed = (pathArg || "").trim();
+    if (!trimmed) {
+        return { ok: false, error: "路径不能为空" };
     }
 
-    const absolute = path.resolve(workspaceRoot, normalized);
-    const resolvedRoot = path.resolve(workspaceRoot);
+    const normalized = trimmed.replace(/\\/g, "/");
+    const mainRoot = path.resolve(workspaceRoot);
 
-    // 检查路径遍历
-    if (!absolute.startsWith(resolvedRoot + path.sep) && absolute !== resolvedRoot) {
-        return { ok: false, error: "路径越界：不允许访问工作区外的文件" };
+    let absolute: string;
+    if (path.isAbsolute(normalized) || (trimmed.length >= 2 && /^[A-Za-z]:/.test(trimmed))) {
+        absolute = path.resolve(normalized);
+    } else {
+        absolute = path.resolve(mainRoot, normalized);
     }
 
-    return { ok: true, absolute, relative: normalized };
+    const underMain = isUnderRoot(absolute, mainRoot);
+    if (underMain.ok) {
+        return { ok: true, absolute, relative: underMain.relative, effectiveRoot: mainRoot };
+    }
+    if (extraWorkspaceRoots?.length) {
+        for (const extra of extraWorkspaceRoots) {
+            const resolvedExtra = path.resolve(extra);
+            const underExtra = isUnderRoot(absolute, resolvedExtra);
+            if (underExtra.ok) {
+                return { ok: true, absolute, relative: underExtra.relative, effectiveRoot: resolvedExtra };
+            }
+        }
+    }
+
+    return { ok: false, error: "路径越界：不允许访问工作区外的目录" };
 }
 
 // ============ list_files 工具 ============
@@ -109,13 +132,13 @@ export const listFilesTool: Tool = {
     definition: {
         name: "list_files",
         description:
-            "列出工作区内指定目录的文件和子目录。用于探索项目结构、查找文件位置。路径必须是相对于工作区根目录的相对路径。",
+            "列出工作区内或 BELLDANDY_EXTRA_WORKSPACE_ROOTS 配置的根目录下指定目录的文件和子目录。path 可为相对路径（相对主工作区）或允许范围内的绝对路径（如 C:/、E:/ 下的路径）。",
         parameters: {
             type: "object",
             properties: {
                 path: {
                     type: "string",
-                    description: "相对于工作区根目录的目录路径（默认为当前目录 '.'）",
+                    description: "目录路径：相对主工作区的相对路径，或允许的绝对路径如 C:/Users、E:/project（默认为 '.' 即主工作区根）",
                 },
                 recursive: {
                     type: "boolean",
@@ -151,13 +174,13 @@ export const listFilesTool: Tool = {
             ? Math.min(args.depth, 10)
             : 3;
 
-        // 路径验证
-        const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot);
+        // 路径验证（主工作区或 extraWorkspaceRoots 下的目录均可）
+        const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot, context.extraWorkspaceRoots);
         if (!pathResult.ok) {
             return makeError(pathResult.error);
         }
 
-        const { absolute, relative } = pathResult;
+        const { absolute, relative, effectiveRoot } = pathResult;
 
         // 黑名单检查
         const denied = isDeniedPath(relative, context.policy.deniedPaths);
@@ -175,7 +198,7 @@ export const listFilesTool: Tool = {
             const entries: FileEntry[] = [];
             await listDirectory(
                 absolute,
-                context.workspaceRoot,
+                effectiveRoot,
                 recursive,
                 depth,
                 1,

@@ -39,29 +39,49 @@ function isDeniedPath(relativePath: string, deniedPaths: string[]): string | nul
   return null;
 }
 
-/** 规范化并验证路径在工作区内 */
+/** 检查路径是否在指定根目录下（不越界） */
+function isUnderRoot(absolute: string, root: string): { ok: true; relative: string } | { ok: false } {
+  const resolvedRoot = path.resolve(root);
+  const rel = path.relative(resolvedRoot, absolute);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) return { ok: false };
+  return { ok: true, relative: rel.replace(/\\/g, "/") };
+}
+
+/** 规范化并验证路径在工作区内（主工作区或 extraWorkspaceRoots 中的任一根目录下） */
 function resolveAndValidatePath(
   relativePath: string,
-  workspaceRoot: string
+  workspaceRoot: string,
+  extraWorkspaceRoots?: string[]
 ): { ok: true; absolute: string; relative: string } | { ok: false; error: string } {
-  // 规范化相对路径
-  const normalized = relativePath.replace(/\\/g, "/");
-
-  // 禁止绝对路径
-  if (path.isAbsolute(normalized)) {
-    return { ok: false, error: "禁止使用绝对路径，请使用相对于工作区的路径" };
+  const trimmed = (relativePath || "").trim();
+  if (!trimmed) {
+    return { ok: false, error: "路径不能为空" };
   }
 
-  // 解析为绝对路径
-  const absolute = path.resolve(workspaceRoot, normalized);
-  const resolvedRoot = path.resolve(workspaceRoot);
+  const normalized = trimmed.replace(/\\/g, "/");
+  const mainRoot = path.resolve(workspaceRoot);
 
-  // 检查路径遍历
-  if (!absolute.startsWith(resolvedRoot + path.sep) && absolute !== resolvedRoot) {
-    return { ok: false, error: "路径越界：不允许访问工作区外的文件" };
+  let absolute: string;
+  if (path.isAbsolute(normalized) || (trimmed.length >= 2 && /^[A-Za-z]:/.test(trimmed))) {
+    absolute = path.resolve(normalized);
+  } else {
+    absolute = path.resolve(mainRoot, normalized);
   }
 
-  return { ok: true, absolute, relative: normalized };
+  const underMain = isUnderRoot(absolute, mainRoot);
+  if (underMain.ok) {
+    return { ok: true, absolute, relative: underMain.relative };
+  }
+  if (extraWorkspaceRoots?.length) {
+    for (const extra of extraWorkspaceRoots) {
+      const underExtra = isUnderRoot(absolute, path.resolve(extra));
+      if (underExtra.ok) {
+        return { ok: true, absolute, relative: underExtra.relative };
+      }
+    }
+  }
+
+  return { ok: false, error: "路径越界：不允许访问工作区外的文件" };
 }
 
 // ============ file_read 工具 ============
@@ -111,8 +131,8 @@ export const fileReadTool: Tool = {
       return makeError("参数错误：path 必须是非空字符串");
     }
 
-    // 路径验证
-    const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot);
+    // 路径验证（主工作区或 extraWorkspaceRoots）
+    const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot, context.extraWorkspaceRoots);
     if (!pathResult.ok) {
       return makeError(pathResult.error);
     }
@@ -244,8 +264,8 @@ export const fileWriteTool: Tool = {
       return makeError("参数错误：content 必须是字符串");
     }
 
-    // 路径验证
-    const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot);
+    // 路径验证（主工作区或 extraWorkspaceRoots）
+    const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot, context.extraWorkspaceRoots);
     if (!pathResult.ok) {
       return makeError(pathResult.error);
     }
@@ -325,13 +345,13 @@ export const fileWriteTool: Tool = {
 export const fileDeleteTool: Tool = {
   definition: {
     name: "file_delete",
-    description: "删除工作区内的文件。路径必须是相对于工作区根目录的相对路径，禁止删除敏感文件（如 .env）。",
+    description: "删除工作区内的文件。path 可为相对路径（如 BOOTSTRAP.md）或工作区内的绝对路径；禁止删除敏感文件（如 .env）。",
     parameters: {
       type: "object",
       properties: {
         path: {
           type: "string",
-          description: "相对于工作区根目录的文件路径",
+          description: "文件路径：相对工作区根（如 BOOTSTRAP.md）或工作区内的绝对路径",
         },
       },
       required: ["path"],
@@ -358,8 +378,8 @@ export const fileDeleteTool: Tool = {
       return makeError("参数错误：path 必须是非空字符串");
     }
 
-    // 路径验证
-    const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot);
+    // 路径验证（主工作区或 extraWorkspaceRoots）
+    const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot, context.extraWorkspaceRoots);
     if (!pathResult.ok) {
       return makeError(pathResult.error);
     }

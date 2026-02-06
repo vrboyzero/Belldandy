@@ -123,9 +123,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
           return;
         }
 
-        // 输出文本增量（如果有）
-        if (response.content) {
-          for (const delta of splitText(response.content, 16)) {
+        // 输出文本增量（如果有）；先剥离工具调用协议块，避免在对话中展示
+        const contentForDisplay = stripToolCallsSection(response.content || "");
+        if (contentForDisplay) {
+          for (const delta of splitText(contentForDisplay, 16)) {
             yield* yieldItem({ type: "delta", delta });
           }
         }
@@ -133,8 +134,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
         // 检查是否有工具调用
         const toolCalls = response.toolCalls;
         if (!toolCalls || toolCalls.length === 0) {
-          // 无工具调用，输出最终结果
-          yield* yieldItem({ type: "final", text: response.content || "" });
+          // 无工具调用，输出最终结果（已剥离协议块）
+          yield* yieldItem({ type: "final", text: contentForDisplay });
           yield* yieldItem({ type: "status", status: "done" });
           return;
         }
@@ -430,4 +431,14 @@ function splitText(text: string, size: number): string[] {
     i += Math.max(1, size);
   }
   return out;
+}
+
+/** 移除模型输出中的工具调用协议块，避免在对话中展示给用户 */
+function stripToolCallsSection(text: string): string {
+  if (!text || typeof text !== "string") return text;
+  return text
+    .replace(/<\|tool_calls_section_begin\|>[\s\S]*?<\|tool_calls_section_end\|>/g, "\n\n（正在执行操作）\n\n")
+    .replace(/<\|tool_call_begin\|>[\s\S]*?<\|tool_call_end\|>/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }

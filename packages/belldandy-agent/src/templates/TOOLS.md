@@ -8,6 +8,26 @@ read_when:
 
 技能定义了工具*如何*工作。这个文件用于记录*你的*具体配置——你的环境特有的信息。
 
+## 文件操作权限（系统提供）
+
+当 `BELLDANDY_TOOLS_ENABLED=true` 时，你可用的文件相关工具与范围如下。
+
+**开放权限（可用工具）：**
+- **读文件**：`file_read` — 读取工作区内或 `BELLDANDY_EXTRA_WORKSPACE_ROOTS` 配置目录下的文件；禁止读取 .env、密钥等敏感文件。
+- **写文件**：`file_write` — 写入上述范围内的文件。
+- **删文件**：`file_delete` — 删除上述范围内的文件。
+- **列目录**：`list_files` — 列出主工作区或 `BELLDANDY_EXTRA_WORKSPACE_ROOTS` 配置根目录下指定目录的文件和子目录；path 可为相对主工作区的路径或允许范围内的绝对路径（如 C:/、E:/ 下），可选 recursive、depth。
+
+**范围与限制：**
+- 主工作区：`~/.belldandy`（或 `BELLDANDY_STATE_DIR` 指定目录）。
+- 额外根目录：由 .env 中 `BELLDANDY_EXTRA_WORKSPACE_ROOTS` 指定（逗号分隔，如 `C:/,E:/,D:/`）；`file_read` / `file_write` / `file_delete` / `list_files` 均可在主工作区与这些根下操作。
+- 路径：可使用相对路径或上述范围内的绝对路径；禁止越界访问。
+- 策略：`policy.deniedPaths` 会禁止访问含 .git、node_modules、.env 等路径。
+
+需要查看某目录下有什么文件时，请使用 `list_files` 工具，不要声称无法列目录。
+
+---
+
 ## 什么应该放在这里
 
 比如：

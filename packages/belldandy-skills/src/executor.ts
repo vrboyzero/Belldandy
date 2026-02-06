@@ -23,6 +23,8 @@ export type ToolExecutorLogger = {
 export type ToolExecutorOptions = {
   tools: Tool[];
   workspaceRoot: string;
+  /** 额外允许的文件操作根目录（Agent 可读写这些目录下的文件） */
+  extraWorkspaceRoots?: string[];
   policy?: Partial<ToolPolicy>;
   auditLogger?: (log: ToolAuditLog) => void;
   agentCapabilities?: AgentCapabilities;
@@ -33,6 +35,7 @@ export type ToolExecutorOptions = {
 export class ToolExecutor {
   private readonly tools: Map<string, Tool>;
   private readonly workspaceRoot: string;
+  private readonly extraWorkspaceRoots: string[];
   private readonly policy: ToolPolicy;
   private readonly auditLogger?: (log: ToolAuditLog) => void;
   private readonly agentCapabilities?: AgentCapabilities;
@@ -41,6 +44,7 @@ export class ToolExecutor {
   constructor(options: ToolExecutorOptions) {
     this.tools = new Map(options.tools.map(t => [t.definition.name, t]));
     this.workspaceRoot = options.workspaceRoot;
+    this.extraWorkspaceRoots = options.extraWorkspaceRoots ?? [];
     this.policy = { ...DEFAULT_POLICY, ...options.policy };
     this.auditLogger = options.auditLogger;
     this.agentCapabilities = options.agentCapabilities;
@@ -103,6 +107,7 @@ export class ToolExecutor {
     const context: ToolContext = {
       conversationId,
       workspaceRoot: this.workspaceRoot,
+      extraWorkspaceRoots: this.extraWorkspaceRoots.length > 0 ? this.extraWorkspaceRoots : undefined,
       policy: this.policy,
       agentCapabilities: this.agentCapabilities,
       logger: this.logger ? {

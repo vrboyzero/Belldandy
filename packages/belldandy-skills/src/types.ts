@@ -77,6 +77,8 @@ export type AgentCapabilities = {
 export type ToolContext = {
   conversationId: string;
   workspaceRoot: string;
+  /** 额外允许的文件操作根目录（如其他盘符下的目录），路径必须落在 workspaceRoot 或其一内 */
+  extraWorkspaceRoots?: string[];
   policy: ToolPolicy;
   agentCapabilities?: AgentCapabilities;
   logger?: {

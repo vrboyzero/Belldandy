@@ -17,6 +17,7 @@ import {
   fileReadTool,
   fileWriteTool,
   fileDeleteTool,
+  listFilesTool,
   createMemorySearchTool,
   createMemoryGetTool,
   browserOpenTool,
@@ -113,6 +114,13 @@ const heartbeatActiveHoursRaw = readEnv("BELLDANDY_HEARTBEAT_ACTIVE_HOURS"); // 
 const defaultStateDir = path.join(os.homedir(), ".belldandy");
 const stateDir = readEnv("BELLDANDY_STATE_DIR") ?? defaultStateDir;
 const memoryDbPath = readEnv("BELLDANDY_MEMORY_DB") ?? path.join(stateDir, "memory.db");
+const extraWorkspaceRootsRaw = readEnv("BELLDANDY_EXTRA_WORKSPACE_ROOTS");
+const extraWorkspaceRoots = extraWorkspaceRootsRaw
+  ? extraWorkspaceRootsRaw
+      .split(",")
+      .map((p) => path.resolve(p.trim()))
+      .filter((p) => p.length > 0)
+  : undefined;
 
 // Logger（尽早初始化，后续所有输出走统一日志）
 const logger = createLoggerFromEnv(stateDir);
@@ -126,6 +134,8 @@ const openaiStream = (readEnv("BELLDANDY_OPENAI_STREAM") ?? "true") !== "false";
 const openaiSystemPrompt = readEnv("BELLDANDY_OPENAI_SYSTEM_PROMPT");
 
 const toolsEnabled = (readEnv("BELLDANDY_TOOLS_ENABLED") ?? "false") === "true";
+const agentTimeoutMsRaw = readEnv("BELLDANDY_AGENT_TIMEOUT_MS");
+const agentTimeoutMs = agentTimeoutMsRaw ? Math.max(5000, parseInt(agentTimeoutMsRaw, 10) || 120_000) : undefined;
 
 // MCP
 const mcpEnabled = (readEnv("BELLDANDY_MCP_ENABLED") ?? "false") === "true";
@@ -206,6 +216,7 @@ const toolsToRegister = toolsEnabled
     fileReadTool,
     fileWriteTool,
     fileDeleteTool,
+    listFilesTool,
 
     createMemorySearchTool(),
     createMemoryGetTool(),
@@ -230,6 +241,7 @@ const toolsToRegister = toolsEnabled
 const toolExecutor = new ToolExecutor({
   tools: toolsToRegister,
   workspaceRoot: stateDir, // Use ~/.belldandy as the workspace root for file operations
+  extraWorkspaceRoots, // 额外允许 file_read/file_write/file_delete 的根目录（如其他盘符）
   policy: DEFAULT_POLICY, // TODO: Load from BELLDANDY_TOOLS_POLICY_FILE if needed
   auditLogger: (log) => {
     const msg = log.success
@@ -247,7 +259,7 @@ const toolExecutor = new ToolExecutor({
 
 // 4. Log enabled tools
 if (toolsEnabled) {
-  logger.info("tools", "Tools enabled: web_fetch, file_read, file_write, memory_search, memory_get, browser_*, log_read, log_search");
+  logger.info("tools", "Tools enabled: web_fetch, file_read, file_write, file_delete, list_files, memory_search, memory_get, browser_*, log_read, log_search");
 }
 
 // 4.1 Initialize MCP and register MCP tools
@@ -331,6 +343,7 @@ Use the 'edge' provider by default for free, high-quality speech.`;
         systemPrompt: currentSystemPrompt,
         toolExecutor: toolExecutor,
         logger,
+        ...(agentTimeoutMs !== undefined && { timeoutMs: agentTimeoutMs }),
       });
     }
     return new OpenAIChatAgent({
