@@ -494,6 +494,76 @@ moltbot 通过 Workspace 引导文件体系实现 Agent 人格化：
 - **可测试性不足**：Phase 2 起就要有最小集成测试，避免后期回归成本爆炸。
 - **敏感信息泄露**：日志与 UI 不回显 token/key/密码；必要时做可配置脱敏规则。
 - **错误处理不一致**：定义统一错误分级（P0-P3）与对用户可读的提示格式，避免“失败静默”或堆栈直出。
+
+### 4.1 安全加固路线图（按优先级）
+
+> 本小节基于当前实现的安全评估结果，按优先级列出需要在后续 Phase 中落实的最小改动方案，方便后续排期与实施。
+
+1. **P0：配对绕过风险（workspace.read 暴露 allowlist/mcp 配置）**
+   - **问题描述**：
+     - 当前 `workspace.read` / `workspace.list` **未纳入 secureMethods 检查**，未配对客户端也可读取 `stateDir` 下的 `.json` 文件。
+     - 由于 `allowlist.json`（已授权 clientId 列表）与 `mcp.json`（MCP 配置）都位于 `stateDir` 且扩展名为 `.json`，存在被未授权客户端读取的风险，从而通过伪造 `clientId` 绕过 Pairing 机制。
+   - **最小改动方案**：
+     - **4.1.1** 在 `packages/belldandy-core/src/server.ts` 中：
+       - 将 `"workspace.read"`、`"workspace.list"` 加入 `secureMethods` 列表，使其与 `message.send/config.read/config.update/system.restart/workspace.write` 一样受 `isClientAllowed` 保护。
+       - 或者：仅对 `.json` 读取做 allowlist 校验，保留对 Markdown/文本的开放读取能力（需在文档中说明差异）。
+     - **4.1.2** 在 `handleReq` 的 `case "workspace.read"` 分支中，显式拒绝访问以下固定文件名：
+       - `allowlist.json`、`pairing.json`、`mcp.json`。
+       - 位置：`packages/belldandy-core/src/server.ts`，`switch (req.method)` 中 workspace 分支。
+     - **4.1.3** 规划一个“内部状态目录”（如 `stateDir/internal/`），存放 allowlist/pairing/mcp 等内部文件，并在 `workspace.*` 的路径解析逻辑中排除该目录。
+
+2. **P1：本地 WebSocket 被浏览器脚本劫持（CSWSH） + 默认 AUTH_MODE=none**
+   - **问题描述**：
+     - 默认配置为 `HOST=127.0.0.1`、`AUTH_MODE=none`，任何在本机浏览器里运行的 JS 都可以尝试连接 `ws://127.0.0.1:28889`。
+     - 结合上面的 P0 漏洞，恶意网页脚本可以：连上 Gateway → 调用 `workspace.read` 读取 `allowlist.json` → 伪造已配对 `clientId` → 获取完整控制权。
+   - **最小改动方案**：
+     - **4.1.4** 强化默认配置与启动校验：
+       - 在 `packages/belldandy-core/src/bin/gateway.ts` 中：
+         - 将 `BELLDANDY_AUTH_MODE` 的默认值从 `none` 调整为 `token`。
+         - 启动时若检测到 `HOST=0.0.0.0` 且 `AUTH_MODE=none`，直接拒绝启动并打印明确错误（而非仅 Warning）。
+       - 在 `.env.example` 和文档中同步更新默认推荐值为 `AUTH_MODE=token`，并强调 `none` 仅适用于**本机开发 + 可信浏览器环境**。
+     - **4.1.5** WebSocket 握手增强：
+       - 在 `server.ts` 的 `acceptConnect` 中引入一个仅服务器知晓的随机 `serverNonce` 或 `sessionToken`，要求客户端在 `connect` 帧中返回；
+       - 该 token 通过 CLI 或启动脚本（`start.sh/start.bat`）安全注入，而不经由 `workspace.*` 暴露。
+
+3. **P1：配置与 Secrets 通过 config.read/config.update 暴露或被篡改**
+   - **问题描述**：
+     - `config.read` 会直接读取并解析 `process.cwd()/.env.local`，将所有键值返回给客户端；`config.update` 可写入任意配置项。
+     - 在 P0 绕过存在时，这意味着 `.env.local` 中的 API Key、Token 等都可能被未授权客户端读取或改写。
+   - **最小改动方案**：
+     - **4.1.6** 在 `packages/belldandy-core/src/server.ts` 中：
+       - 保持 `config.read/config.update` 在 `secureMethods` 中（现状如此），同时在其实现内增加对敏感键的脱敏处理，与 `ToolExecutor.audit` 的逻辑对齐：
+         - 例如对包含 `password/token/api_key/secret` 等字段名的值统一返回 `[REDACTED]`。
+     - **4.1.7** 为 `config.update` 增加“允许修改的 key 白名单”，限制只能写入与 Agent 运行相关的少数配置（如模型/心跳/浏览器中继），而不允许远程修改日志目录、stateDir 等安全敏感配置。
+
+4. **P2：MCP 与高权限工具的边界收紧（显式 Opt-in）**
+   - **问题描述**：
+     - MCP 服务器一旦启用，其所有工具会被桥接为本地工具，能力取决于远端实现（可能包含文件/命令/网络等高权限操作）。
+     - 库层面的高权限工具（`run_command`、`terminal`、`code_interpreter`）对集成者开放，未来有被错误注册进 Gateway 的风险。
+   - **最小改动方案**：
+     - **4.1.8** 在 `packages/belldandy-core/src/bin/gateway.ts` 中：
+       - 明确将 MCP 工具的注册与否绑定到 `BELLDANDY_MCP_ENABLED` 与 `BELLDANDY_TOOLS_ENABLED`，并在日志中打印当前启用的 MCP 服务器与工具数量（现已部分实现，可强化文档与日志）。
+     - **4.1.9** 在 `packages/belldandy-skills/src/index.ts` 与文档中：
+       - 对 `run_command` / `terminal` / `code_interpreter` 标注为“高风险工具，仅限本地开发调试使用”，并建议集成者在自己的 Agent 中显式 Opt-in，而非默认注册到用户暴露的 Gateway。
+
+5. **P2：web_fetch SSRF 细节修补**
+   - **问题描述**：
+     - 目前的内网地址拦截基于 host 字符串匹配，对形如 `http://2130706433/`（十进制 IP）或某些 DNS 解析到内网地址的情况缺乏防护。
+   - **最小改动方案**：
+     - **4.1.10** 在 `packages/belldandy-skills/src/builtin/fetch.ts` 中：
+       - 在发送请求前增加对 `URL.hostname` 的进一步解析：
+         - 若为纯数字或非标准 IP 字符串，尝试用 `net.isIP` 或手动解析为 IP 后再走 `isPrivateHost` 检查；
+         - 对需要 DNS 解析的域名，可选地增加一次 `dns.lookup`，将返回 IP 再过一遍内网范围判断（作为可配置开关）。
+
+6. **P3：浏览器自动化的域名/页面访问控制**
+   - **问题描述**：
+     - 启用 Browser Relay 后，Agent 可以在用户浏览器中打开任意 URL、读取内容、截图并执行操作，目前缺少域名或 URL 级别的限制。
+   - **最小改动方案**：
+     - **4.1.11** 在 `packages/belldandy-skills/src/builtin/browser/tools.ts` 中：
+       - 为 `browser_open` / `browser_navigate` 增加可选的 `allowedDomains` / `deniedDomains` 策略（结构可以复用 `web_fetch` 的策略）；
+       - 在 Gateway 层通过环境变量（如 `BELLDANDY_BROWSER_ALLOWED_DOMAINS`）注入该策略，默认仅允许访问 `localhost`/指定工作域，或者至少在文档中明确“启用浏览器控制等同于给予 Agent 高权限操作浏览器”的风险提示。
+
+> 注：以上各项为“最小可行改动”级别的规划，具体实施时可以拆解为多个 Phase（例如 Phase 19：安全加固一期），并为每一项补充单元/集成测试用例。 
 ### Phase 8：Moltbot 全能力对标（进行中）
 
 **目标**：实现除特定渠道操作外的所有 Moltbot 核心能力，赋予 Belldandy 真正的"全能"属性。
