@@ -8,8 +8,10 @@
     "longTimeoutMs": 300000,
     "quickCommands": ["git", "ls", "dir"],
     "longCommands": ["npm", "pnpm", "yarn", "cmake", "cargo", "go"],
-    "extraSafelist": ["terraform"],
-    "extraBlocklist": ["docker"],
+    "extraSafelist": ["terraform", "docker", "podman", "kubectl", "helm"],
+    "extraBlocklist": [],
+
+
     "nonInteractive": {
       "enabled": true,
       "rules": {

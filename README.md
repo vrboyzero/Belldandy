@@ -260,7 +260,10 @@ BELLDANDY_LOG_FILE=true                 # 是否写入文件
 ### 工具权限与策略（简要）
 
 - **文件访问**：默认仅允许在工作区范围内进行读写，敏感文件（如 `.env` / `SOUL.md`）受保护。
-- **系统命令**：仅允许执行白名单命令（Safe Mode），并带有超时与非交互策略。
+- **`file_write` 能力**：支持 `overwrite/append/replace/insert`；可按行号或正则替换；默认自动创建目录；可通过策略放开点文件与二进制（base64）写入；在非 Windows 上写入 `.sh` 会自动 `chmod +x`。
+- **多工作区**：可通过 `BELLDANDY_EXTRA_WORKSPACE_ROOTS` 追加可读写根目录，实现跨项目协作。
+- **系统命令**：Safe Mode 白名单，支持非交互参数注入、快速/构建命令分级超时与强制 kill；对 `rm -r/-rf` 与 `del /s /q` 等危险参数强拦截。
+- **防火墙规则**：路径拦截优先，禁止命令触达 `SOUL.md`；禁止 `exec` 读取 `.env`。
 - **策略覆盖**：可通过 `BELLDANDY_TOOLS_POLICY_FILE` 指定 JSON 配置覆盖默认策略（见 `.env.example`）。
 
 ### MCP 配置

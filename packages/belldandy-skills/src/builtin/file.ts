@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { Tool, ToolContext, ToolCallResult } from "../types.js";
+import type { Tool, ToolCallResult } from "../types.js";
 
 /** 敏感文件模式（禁止读取） */
 const SENSITIVE_PATTERNS = [
@@ -267,11 +267,36 @@ export const fileWriteTool: Tool = {
         mode: {
           type: "string",
           description: "写入模式（默认 overwrite）",
-          enum: ["overwrite", "append"],
+          enum: ["overwrite", "append", "replace", "insert"],
         },
         createDirs: {
           type: "boolean",
           description: "是否自动创建父目录（默认 true）",
+        },
+        startLine: {
+          type: "number",
+          description: "替换起始行（1-based，仅 mode=replace 时生效）",
+        },
+        endLine: {
+          type: "number",
+          description: "替换结束行（1-based，仅 mode=replace 时生效）",
+        },
+        regex: {
+          type: "string",
+          description: "正则表达式（仅 mode=replace 时生效）",
+        },
+        regexFlags: {
+          type: "string",
+          description: "正则标记（如 g, i, m，仅 mode=replace 时生效）",
+        },
+        line: {
+          type: "number",
+          description: "插入行号（1-based，仅 mode=insert 时生效）",
+        },
+        position: {
+          type: "string",
+          description: "插入位置（默认 before，仅 mode=insert 时生效）",
+          enum: ["before", "after"],
         },
       },
       required: ["path", "content"],
@@ -359,13 +384,100 @@ export const fileWriteTool: Tool = {
     }
 
     // 写入文件
-    const mode = (args.mode as "overwrite" | "append") || "overwrite";
+    const mode = (args.mode as "overwrite" | "append" | "replace" | "insert") || "overwrite";
     const createDirs = args.createDirs !== false; // 默认 true
+
+    const applyExecutableBit = async (): Promise<void> => {
+      const ext = path.posix.extname(relative.replace(/\\/g, "/")).toLowerCase();
+      if (process.platform !== "win32" && ext === ".sh") {
+        await fs.chmod(absolute, 0o755);
+      }
+    };
+
+    const readExistingText = async (): Promise<{ text: string; newline: string }> => {
+      const raw = await fs.readFile(absolute, "utf-8");
+      const newline = raw.includes("\r\n") ? "\r\n" : "\n";
+      return { text: raw, newline };
+    };
 
     try {
       // 创建父目录
       if (createDirs) {
         await fs.mkdir(path.dirname(absolute), { recursive: true });
+      }
+
+      if (mode === "replace" || mode === "insert") {
+        if (encoding !== "utf-8") {
+          return makeError("replace/insert 仅支持 utf-8 编码");
+        }
+        const existingStat = await fs.stat(absolute).catch(() => null);
+        if (!existingStat || !existingStat.isFile()) {
+          return makeError(`文件不存在：${relative}`);
+        }
+        const { text, newline } = await readExistingText();
+        const lines = text.split(/\r?\n/);
+
+        if (mode === "replace") {
+          const regex = args.regex as string | undefined;
+          if (regex && regex.trim()) {
+            const flags = (args.regexFlags as string | undefined) ?? "g";
+            const re = new RegExp(regex, flags);
+            if (!re.test(text)) {
+              return makeError("未匹配到正则内容，未做替换");
+            }
+            const next = text.replace(re, content);
+            await fs.writeFile(absolute, next, "utf-8");
+          } else {
+            const startLine = Number(args.startLine);
+            const endLine = Number(args.endLine ?? args.startLine);
+            if (!Number.isInteger(startLine) || startLine <= 0) {
+              return makeError("startLine 必须是正整数");
+            }
+            if (!Number.isInteger(endLine) || endLine < startLine) {
+              return makeError("endLine 必须 >= startLine");
+            }
+            const startIdx = startLine - 1;
+            const endIdx = endLine - 1;
+            if (startIdx >= lines.length || endIdx >= lines.length) {
+              return makeError("行号越界");
+            }
+            const insertLines = content.split(/\r?\n/);
+            lines.splice(startIdx, endIdx - startIdx + 1, ...insertLines);
+            const next = lines.join(newline);
+            await fs.writeFile(absolute, next, "utf-8");
+          }
+        } else {
+          const line = Number(args.line);
+          const position = (args.position as "before" | "after" | undefined) ?? "before";
+          if (!Number.isInteger(line) || line <= 0) {
+            return makeError("line 必须是正整数");
+          }
+          const index = position === "after" ? line : line - 1;
+          if (index < 0 || index > lines.length) {
+            return makeError("插入行号越界");
+          }
+          const insertLines = content.split(/\r?\n/);
+          lines.splice(index, 0, ...insertLines);
+          const next = lines.join(newline);
+          await fs.writeFile(absolute, next, "utf-8");
+        }
+
+        await applyExecutableBit();
+
+        const updatedStat = await fs.stat(absolute);
+        return {
+          id,
+          name,
+          success: true,
+          output: JSON.stringify({
+            path: relative,
+            bytesWritten: Buffer.byteLength(content, "utf-8"),
+            mode,
+            encoding,
+            totalSize: updatedStat.size,
+          }),
+          durationMs: Date.now() - start,
+        };
       }
 
       const writeBuffer = encoding === "base64" ? Buffer.from(content, "base64") : null;
@@ -384,7 +496,9 @@ export const fileWriteTool: Tool = {
         }
       }
 
-      const stat = await fs.stat(absolute);
+      await applyExecutableBit();
+
+      const finalStat = await fs.stat(absolute);
       const bytesWritten = writeBuffer ? writeBuffer.length : Buffer.byteLength(content, "utf-8");
 
       return {
@@ -396,7 +510,7 @@ export const fileWriteTool: Tool = {
           bytesWritten,
           mode,
           encoding,
-          totalSize: stat.size,
+          totalSize: finalStat.size,
         }),
         durationMs: Date.now() - start,
       };

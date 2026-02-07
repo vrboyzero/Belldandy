@@ -16,23 +16,29 @@ const PROTECTED_FILES = ["soul.md"];
 const COMMON_SAFELIST = [
     // 核心系统/文本
     "pwd", "whoami", "date", "echo", "cat", "grep", "head", "tail", "less",
+    "which", "uname", "who", "id", "uptime", "time",
+    "sed", "awk", "sort", "uniq", "cut", "wc", "tee", "tr", "xargs",
     // JS/TS
-    "git", "npm", "pnpm", "node", "yarn", "bun", "npx", "tsc", "vite", "next",
+    "git", "npm", "pnpm", "node", "yarn", "bun", "npx", "tsc", "vite", "next", "vue", "vue-cli",
+    "eslint", "prettier", "storybook", "turbo", "nx",
     // Python
-    "python", "python3", "pip", "pip3", "pipenv", "conda", "pytest",
+    "python", "python3", "pip", "pip3", "pipenv", "conda", "pytest", "pipx", "poetry", "ruff", "black",
     // 编译/底层
     "gcc", "g++", "make", "cmake", "cargo", "go",
     // 其他语言工具
-    "java", "mvn", "dotnet",
+    "java", "mvn", "dotnet", "dotnet-format",
     // 文件与进程
     "touch", "mkdir", "cp", "mv", "rmdir", "rm",
     "ps", "df", "du", "hostname",
     // 网络/传输
     "curl", "wget", "scp", "rsync",
+    "dig", "nslookup", "traceroute", "tracert", "ip", "ifconfig",
     // 文件搜索/过滤
     "rg", "fd", "jq", "yq",
     // 媒体与文档
     "ffmpeg", "magick", "pandoc",
+    // 版本控制辅助
+    "gh", "glab",
     // 常见 create-* 初始化命令
     "create-react-app",
 ];
@@ -40,7 +46,15 @@ const COMMON_SAFELIST = [
 // Unix 特定命令 (Linux + macOS)
 const UNIX_SAFELIST = [
     "ls", "top", "free", "chmod", "chown", "ln", "which", "find", "xargs",
+    "uname", "who", "id", "uptime", "time",
+    "sed", "awk", "sort", "uniq", "cut", "wc", "tee", "tr",
     "tar", "gzip", "gunzip", "zip", "unzip",
+    "dig", "nslookup", "traceroute", "ip", "ifconfig",
+    "gh", "glab",
+    "gradle", "gradlew", "mvnw",
+    "pipx", "poetry", "ruff", "black",
+    "eslint", "prettier", "storybook", "turbo", "nx",
+    "golangci-lint", "goimports",
     "open",  // macOS 特有：打开文件/URL
     "ssh", "ping", "netstat",
 ];
@@ -48,7 +62,8 @@ const UNIX_SAFELIST = [
 // Windows 特定命令
 const WINDOWS_SAFELIST = [
     "dir", "copy", "move", "del", "ren", "type", "ls",
-    "ipconfig", "netstat", "tasklist", "where", "ping", "hostname",
+    "ipconfig", "netstat", "tasklist", "where", "ping", "hostname", "ssh",
+    "tracert",
     "start"  // Windows 特有：打开文件/URL
 ];
 
@@ -87,12 +102,16 @@ const NON_INTERACTIVE_FLAGS = ["--yes", "-y", "--assume-yes", "--non-interactive
 
 const QUICK_COMMANDS = new Set([
     "pwd", "whoami", "date", "echo", "git", "ls", "dir", "cat", "head", "tail",
-    "rg", "fd", "jq", "yq", "hostname", "df", "du", "netstat", "ping", "ipconfig", "tasklist", "where"
+    "rg", "fd", "jq", "yq", "hostname", "df", "du", "netstat", "ping", "ipconfig", "tasklist", "where",
+    "which", "uname", "who", "id", "uptime", "time",
+    "sed", "awk", "sort", "uniq", "cut", "wc", "tee", "tr", "xargs",
+    "dig", "nslookup", "traceroute", "tracert", "ip", "ifconfig"
 ]);
 
 const LONG_COMMANDS = new Set([
-    "npm", "pnpm", "yarn", "npx", "node", "python", "python3", "pip", "pip3", "pipenv", "conda", "pytest",
-    "tsc", "vite", "next", "gcc", "g++", "make", "cmake", "cargo", "go", "java", "mvn", "dotnet",
+    "npm", "pnpm", "yarn", "npx", "node", "python", "python3", "pip", "pip3", "pipenv", "conda", "pytest", "pipx", "poetry",
+    "tsc", "vite", "next", "vue", "vue-cli", "gcc", "g++", "make", "cmake", "cargo", "go", "java", "mvn", "dotnet",
+    "gradle", "gradlew", "mvnw",
     "ffmpeg", "pandoc", "magick"
 ]);
 

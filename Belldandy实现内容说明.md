@@ -35,6 +35,10 @@
     - **内置工具**：
         - `web_fetch`：受控的网页抓取工具（含域名白/黑名单、内网 IP 阻断、超时与大小限制）。
         - `file_read` / `file_write`：受控的文件读写工具（防目录遍历、敏感文件黑名单、显式写入许可）。
+            - **写入模式**：`overwrite/append/replace/insert`，支持按行号或正则进行局部替换。
+            - **项目感知**：默认自动创建父目录；支持跨工作区根目录（`BELLDANDY_EXTRA_WORKSPACE_ROOTS`）。
+            - **格式策略**：允许扩展名白名单、点文件、base64（二进制）写入策略化控制。
+            - **脚本权限**：非 Windows 下写入 `.sh` 自动 `chmod +x`。
     - **Function Calling**：实现了 `ToolEnabledAgent`，支持“思考-调用工具-获取结果-再思考”的 ReAct 循环。
 - **价值**：让 Agent 可以联网搜索最新信息、阅读本地文档、甚至协助编写代码文件，极大地扩展了其实用性。
 
@@ -168,10 +172,13 @@
 ### 8. 系统级操作 (System Execution) Phase 10
 - **目标**：赋予 Agent 在宿主机执行 Shell 命令的能力，但必须保证宿主机安全。
 - **策略**：**Consumer Safe Mode (消费者安全模式)**
-    - **严格白名单**：只允许 `git`, `npm`, `ls`, `cd`, `pwd`, `date` 等开发与诊断工具。
+    - **严格白名单**：覆盖主流开发工具（Node/Python/编译链/Java/.NET/媒体/文档转换），并区分 Windows/Unix 命令差异。
+    - **非交互保护**：对常见命令自动追加 `-y/--yes` 等参数，避免卡在交互输入。
+    - **超时与强杀**：快速命令默认 5s、构建命令 300s，超时后强制 kill 进程。
     - **风险阻断**：
         - 🚫 **Blocklist**：`sudo`, `su`, `mkfs`, `dd` 等特权/破坏指令直接拦截。
-        - ⚠️ **Arg Check**：允许 `rm` 但 **严禁** `rm -r` / `rm -rf`，强迫 Agent 使用更安全的 `delete_file` 工具或非递归删除。
+        - ⚠️ **Arg Check**：允许 `rm` / `del` 但 **严禁** `rm -r/-rf` 与 `del /s /q`。
+        - 🔒 **敏感保护**：`SOUL.md` 访问优先拦截；禁止通过 `exec` 读取 `.env`。
 - **价值**：填补了 Agent 无法执行 `npm install` 或 `git commit` 的能力空白，使其成为真正的"全栈工程师"。
 
 ### 9. 实时文件感知 (Real-time File Perception) Phase 11
@@ -586,7 +593,7 @@ Moltbot 支持大量第三方集成插件（Skills），例如：
     - **Memory**：使用 `node:sqlite` + `sqlite-vec` 实现本地向量数据库。
     - **Media**：图片/文件自动存储在本地文件系统中。
 
-> **Belldandy 现状对比**：目前 Belldandy 已实现了 **文件操作** (read/write)、**Web Fetch**、**Memory** 以及 **浏览器自动化（基础版）** 能力。**系统命令执行** 属于高风险模块，目前尚未引入。
+> **Belldandy 现状对比**：目前 Belldandy 已实现了 **文件操作** (read/write)、**Web Fetch**、**Memory**、**浏览器自动化（基础版）**，并提供 **Safe Mode 的系统命令执行**（白名单 + 超时 + 风险阻断）。
 
 ---
 

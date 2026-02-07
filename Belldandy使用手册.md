@@ -120,9 +120,27 @@ BELLDANDY_LOG_LEVEL=debug
 # BELLDANDY_LOG_FILE=true
 ```
 
+### 3.3 工具权限与策略
 
+Belldandy 的工具系统默认处于 **Safe Mode**，并可通过策略文件进行精细化控制：
 
-### 3.3 可视化配置 (Settings UI)
+- **文件读写范围**：默认只允许工作区内读写，敏感文件（如 `.env` / `SOUL.md`）受保护。
+- **`file_write` 能力**：支持 `overwrite/append/replace/insert`，可按行号或正则替换；默认自动创建目录；在非 Windows 下写入 `.sh` 会自动 `chmod +x`。
+- **多工作区**：可通过 `BELLDANDY_EXTRA_WORKSPACE_ROOTS` 追加可读写根目录，实现跨项目协作。
+- **系统命令**：白名单执行 + 非交互参数注入 + 快速/构建命令分级超时（5s/300s）+ 超时强制 kill；危险参数（如 `rm -r/-rf`、`del /s /q`）会被拦截。
+- **策略覆盖**：通过 `BELLDANDY_TOOLS_POLICY_FILE` 指定 JSON 策略文件，覆盖默认策略（示例见 `.env.example`）。**未设置该变量时，`extraSafelist` 不生效。**
+
+可选配置示例（添加到 `.env.local`或`.env`）：
+
+```env
+# 工具策略文件（JSON）
+BELLDANDY_TOOLS_POLICY_FILE=E:\project\belldandy\config\tools-policy.json
+
+# 额外允许的工作区根目录（多项目协作）
+BELLDANDY_EXTRA_WORKSPACE_ROOTS=E:\projects,D:\workspace
+```
+
+### 3.4 可视化配置 (Settings UI)
 
 如果你觉得编辑文本文件太麻烦，Belldandy 提供了全新的 Web 配置面板：
 

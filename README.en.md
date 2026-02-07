@@ -256,8 +256,12 @@ BELLDANDY_LOG_FILE=true                 # Log to files
 ### Tool Permissions (Brief)
 
 - **File access**: confined to workspace roots by default; sensitive files like `.env` / `SOUL.md` are protected.
-- **System commands**: Safe Mode allowlist only, with timeouts and non‑interactive enforcement.
+- **`file_write` capabilities**: supports `overwrite/append/replace/insert`; replace by line or regex; auto‑create parent dirs; dotfiles and base64 writes are policy‑controlled; `.sh` writes auto‑`chmod +x` on non‑Windows.
+- **Multi‑workspace**: extend writable roots via `BELLDANDY_EXTRA_WORKSPACE_ROOTS` for cross‑project work.
+- **System commands**: Safe Mode allowlist with non‑interactive injection, quick/build timeouts, and forced kill; dangerous args like `rm -r/-rf` and `del /s /q` are blocked.
+- **Firewall rules**: path guard blocks access to `SOUL.md`; `exec` is forbidden from reading `.env`.
 - **Policy overrides**: use `BELLDANDY_TOOLS_POLICY_FILE` to point at a JSON policy file (see `.env.example`).
+
 
 ### MCP Configuration
 
