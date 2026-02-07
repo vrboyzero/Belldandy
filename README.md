@@ -257,6 +257,12 @@ BELLDANDY_LOG_CONSOLE=true              # 是否输出到控制台
 BELLDANDY_LOG_FILE=true                 # 是否写入文件
 ```
 
+### 工具权限与策略（简要）
+
+- **文件访问**：默认仅允许在工作区范围内进行读写，敏感文件（如 `.env` / `SOUL.md`）受保护。
+- **系统命令**：仅允许执行白名单命令（Safe Mode），并带有超时与非交互策略。
+- **策略覆盖**：可通过 `BELLDANDY_TOOLS_POLICY_FILE` 指定 JSON 配置覆盖默认策略（见 `.env.example`）。
+
 ### MCP 配置
 
 [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) 是一个标准化协议，用于 AI 助手连接外部数据源和工具。

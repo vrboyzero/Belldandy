@@ -253,7 +253,14 @@ BELLDANDY_LOG_CONSOLE=true              # Log to console
 BELLDANDY_LOG_FILE=true                 # Log to files
 ```
 
+### Tool Permissions (Brief)
+
+- **File access**: confined to workspace roots by default; sensitive files like `.env` / `SOUL.md` are protected.
+- **System commands**: Safe Mode allowlist only, with timeouts and non‑interactive enforcement.
+- **Policy overrides**: use `BELLDANDY_TOOLS_POLICY_FILE` to point at a JSON policy file (see `.env.example`).
+
 ### MCP Configuration
+
 
 [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) is a standard protocol for connecting AI assistants to external data sources and tools.
 
