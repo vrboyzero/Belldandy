@@ -2,8 +2,8 @@
 
 ## 1. 范围与约束
 
-- **开发目录**：`e:\project\Belldandy\Belldandy`
-- **参考目录（只读）**：`e:\project\Belldandy\moltbot`（不修改、不编码）
+- **开发目录**：`e:\project\Belldandy`
+- **参考目录（只读）**：`E:\project\belldandy\openclaw`（不修改、不编码）
 - 默认目标：先完成 **WebChat → Gateway → Agent → Reply** 的最小闭环，再扩展渠道/skills/memory。
 
 ## 1.1 技术栈与工程形态（建议）
@@ -485,6 +485,42 @@ moltbot 通过 Workspace 引导文件体系实现 Agent 人格化：
 - 修改 `SOUL.md` 后重启，Agent 语调/风格发生变化
 - 首次使用时触发 Bootstrap 引导，完成后自动更新 `IDENTITY.md` 和 `USER.md`
 - 询问"你是谁"时，Agent 能回答其身份信息
+
+### 3.2 基于 OpenClaw 对标的 Roadmap 排期（新增）
+
+> 依据 `openclawVSBelldandy实现对比说明.md` 中所有 **⚠️/❌** 能力项，对后续开发进行优先级分组与阶段规划。本节作为「实施计划」的汇总视图，用于 Roadmap 排期与排队。
+
+#### 3.2.1 近期（优先级 P1，当前/下一个大版本内完成）
+
+| 编号 | 主题 | 对应对比章节 | 主要目标 | 备注 |
+|------|------|--------------|----------|------|
+| P1-1 | 安全加固（workspace / config / browser） | §10 安全、防护 | 落实安全路线图中的 P0/P1/P2 项：将 `workspace.read/list` 纳入 secureMethods 并屏蔽 `allowlist.json/mcp.json` 等敏感文件；调整默认 `AUTH_MODE`（避免 `none`）；对 `config.read/update` 做脱敏和字段白名单；为 `web_fetch` 和浏览器工具增加更严密的 SSRF/域名策略。 | 具体技术细节已在本文 **4.1 安全加固路线图** 中给出，实现时按该小节拆任务即可。 |
+| P1-2 | CLI 命令树与 Onboarding Wizard | §1 核心平台 | 在现有 `pnpm dev:gateway` 和 pairing/skills 命令基础上，设计并实现统一的 `belldandy` CLI 入口（或 `belldandy gateway/agent/send/config/doctor` 子命令），并新增交互式 Onboarding Wizard（对标 `openclaw onboard`），覆盖 gateway、workspace、channels、skills 的引导配置。 | Wizard UI 可先走 CLI 文本模式，后续再考虑 Web 向导；需与现有 Settings/Doctor 面板配合。 |
+| P1-3 | 渠道扩展（一线 IM 最小支撑） | §3 Channels | 在 `belldandy-channels` 现有接口基础上，新增至少 1–2 个非飞书渠道（建议 Telegram + Slack 或 Discord），形成“多渠道收件箱”的最小闭环，对齐 OpenClaw 的多渠道能力。 | 优先选技术门槛低、官方 SDK 成熟的渠道；可先实现只收消息 + 回复的 MVP，后续再补群路由细节。 |
+| P1-4 | 定时任务 / Cron 工具（软硬结合） | §8 定时任务 | 在 Heartbeat Runner 之上，抽象出通用 Cron 工具与配置（例如 `cron.list` / `cron.set`），对接 Gateway 配置，让非心跳类任务也能按计划触发（对标 OpenClaw 的 cron jobs）。 | 初版可以仅支持本地定时任务，暂不接 webhook/Gmail PubSub；注意与 HEARTBEAT.md 的职责边界。 |
+| P1-5 | 会话模型梳理与多 Agent 预备 | §2 会话模型 | 在保持当前单主 Agent 的前提下，梳理 `ConversationStore` 与 workspace 结构，为未来多 Agent 路由预留配置位（如 `agent.main`、`agent.work` 等），并在 System Prompt 中明确主/子会话角色。 | 不必一次性实现完整 multi-agent routing，但要避免未来扩展时破坏现有 API。 |
+
+#### 3.2.2 中期（优先级 P2，1–2 个大版本内滚动推进）
+
+| 编号 | 主题 | 对应对比章节 | 主要目标 | 备注 |
+|------|------|--------------|----------|------|
+| P2-1 | Multi-Agent 路由与 Session 编排 | §2 会话模型 | 引入多 Agent / 多 workspace 配置（例如按 channel/account/peer 路由不同 persona），并实现 `sessions_list`、`sessions_history`、`sessions_send` 等 Session 工具，对齐 OpenClaw 的 Agent-to-Agent 协作能力。 | 需要与 Methods/Memory/Logs 协同设计，避免不同 Agent 间记忆和方法污染。 |
+| P2-2 | Channels 路由引擎升级 | §3 Channels | 在现有 Channel 接口上实现 mention gating、allowlist/allowFrom、群聊路由规则等，支持按群/会话精确控制哪些消息会触发 Agent（对齐 OpenClaw 的 group routing）。 | 人格文档（AGENTS.md）中已有行为准则，可作为规则默认值；实现时注意与安全策略统一。 |
+| P2-3 | Skills 生态与「技能注册中心」 | §5 工具 / Skills | 在本地 skills 基础上，设计 ClawHub 式技能 registry：支持列出/搜索/安装/启用技能（本地 + MCP server），并在 UI 或 CLI 中提供可视化管理。 | MCP 已经具备，可优先做“本地 catalogue + MCP skill 映射”，远程公共 registry 可以后置。 |
+| P2-4 | Canvas / 可视化工作区（基础版） | §7 浏览器/Canvas | 设计并实现一个基础 Canvas / Board 功能（可以嵌在 WebChat 或独立页面），支持简单的卡片/连线/标注，对标 OpenClaw 的 A2UI 方向。 | 初期可以只做“静态画布 + 快照”，后续再考虑 A2UI 式代码驱动界面。 |
+| P2-5 | Webhooks 与外部触发 | §8 定时任务 | 在通用 Cron 完成后，补充 Webhook 入口（如 `POST /api/webhook/:id`）和最小 Gmail/通知触发机制，使 Belldandy 能像 OpenClaw 一样响应外部事件。 | 注意与安全/鉴权集成，避免 Webhook 成为绕过 Pairing 的入口。 |
+| P2-6 | Nodes 风格的 Memory/Knowledge Graph | §6 记忆 | 在现有 Memory（FTS5 + 向量）之上增加 `nodes` 风格的知识图谱工具（如 `nodes.create/link/query`），以支持更复杂的长期结构化知识，对齐 OpenClaw 的 nodes 概念。 | 与方法论系统结合良好，可用于沉淀“概念/实体/关系级”知识。 |
+
+#### 3.2.3 远期（优先级 P3，可按资源与用户需求择机推进）
+
+| 编号 | 主题 | 对应对比章节 | 主要目标 | 备注 |
+|------|------|--------------|----------|------|
+| P3-1 | Apps & Nodes（macOS/iOS/Android 原生应用） | §4 Apps & Nodes | 设计 Belldandy 自有的 macOS 菜单栏 app 及 iOS/Android 节点，暴露 `system.run`、通知、摄像头、屏幕录制等本地能力，与 Gateway 通过 node 协议交互。 | 工程量较大，需在核心体验稳定后再启动；可以优先利用现有浏览器/桌面环境替代。 |
+| P3-2 | 远程 Gateway 与部署工具链 | §1 / §11 平台与运维 | 对标 OpenClaw 的 remote gateway + Tailscale + Docker/Nix 支持，为 Belldandy 设计远程部署与访问方案（例如 Docker 镜像、Cloud 实例、Tailscale Serve/Funnel 集成）。 | 适合有多设备/远程服务器需求的高级用户；需与安全章节（认证/暴露面）联动。 |
+| P3-3 | 高阶 Canvas & 多节点视觉 | §7 浏览器/Canvas | 在基础 Canvas 上扩展多节点（桌面/移动）协同视图，以及更丰富的视觉能力（多相机、屏幕流、实时标注），接近 OpenClaw 的 A2UI + nodes 组合体验。 | 强依赖 Apps & Nodes 的落地，可与 Voice/TTS/方法论结合做更复杂的「仪表盘」场景。 |
+| P3-4 | IDE 协议桥接（ACP 或等价） | §9 MCP/ACP | 评估是否需要在 MCP 之外增加 ACP/OpenClaw 风格的 IDE 协议桥接（如 `belldandy acp`），让外部 IDE 能通过统一协议驱动 Gateway。 | 当前 MCP 已可覆盖多数「工具接入」场景，此项优先级可以保持较低。 |
+
+以上分组并不要求一次性完成某一层级下的全部条目，可以按「P1 全覆盖 → P2/P3 按需切块」的方式滚动推进；后续若对比文档更新，只需在本小节追加/调整对应条目即可。
 
 ## 4. 风险点与应对
 

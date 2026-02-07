@@ -56,3 +56,6 @@ coverage/
 *.tgz
 *.tmp
 *.bak
+
+# OpenClaw workspace
+openclaw/
