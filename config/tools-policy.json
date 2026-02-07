@@ -1,0 +1,34 @@
+{
+  "allowedPaths": ["workspace", "notes"],
+  "deniedPaths": [".git", "node_modules", ".env"],
+  "maxTimeoutMs": 30000,
+  "maxResponseBytes": 512000,
+  "exec": {
+    "quickTimeoutMs": 5000,
+    "longTimeoutMs": 300000,
+    "quickCommands": ["git", "ls", "dir"],
+    "longCommands": ["npm", "pnpm", "yarn", "cmake", "cargo", "go"],
+    "extraSafelist": ["terraform"],
+    "extraBlocklist": ["docker"],
+    "nonInteractive": {
+      "enabled": true,
+      "rules": {
+        "npm init": "-y",
+        "pnpm dlx": "--yes",
+        "conda install": "-y"
+      }
+    }
+  },
+  "fileWrite": {
+    "allowedExtensions": [
+      ".js", ".ts", ".jsx", ".tsx", ".html", ".css", ".scss", ".vue",
+      ".py", ".go", ".rs", ".java", ".c", ".cpp", ".sh", ".bat", ".ps1",
+      ".yaml", ".yml", ".toml", ".xml", ".conf",
+      ".md", ".json", ".txt",
+      ".unity", ".prefab", ".asset", ".shader", ".spine",
+      ".gitignore", ".prettierrc"
+    ],
+    "allowDotFiles": true,
+    "allowBinary": true
+  }
+}

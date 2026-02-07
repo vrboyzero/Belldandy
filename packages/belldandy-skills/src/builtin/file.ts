@@ -27,6 +27,40 @@ function isSensitivePath(relativePath: string): boolean {
   return SENSITIVE_PATTERNS.some(p => lower.includes(p));
 }
 
+/** 受保护文件（禁止修改/删除） */
+const PROTECTED_FILES = ["soul.md"];
+
+function isProtectedFile(relativePath: string): boolean {
+  const normalized = relativePath.replace(/\\/g, "/").toLowerCase();
+  return PROTECTED_FILES.some(p => normalized === p || normalized.endsWith(`/${p}`));
+}
+
+function normalizeExtensions(values: string[] | undefined): string[] {
+  if (!values || values.length === 0) return [];
+  return values.map(v => v.trim().toLowerCase()).filter(Boolean);
+}
+
+function isDotFile(relativePath: string): boolean {
+  const base = path.posix.basename(relativePath.replace(/\\/g, "/"));
+  return base.startsWith(".");
+}
+
+function isExtensionAllowed(relativePath: string, allowedExtensions: string[]): boolean {
+  if (allowedExtensions.length === 0) return true;
+  const normalized = relativePath.replace(/\\/g, "/").toLowerCase();
+  const base = path.posix.basename(normalized);
+  const ext = path.posix.extname(base);
+
+  return allowedExtensions.some((entry) => {
+    if (!entry) return false;
+    const needle = entry.startsWith(".") ? entry : `.${entry}`;
+    if (entry.startsWith(".")) {
+      return entry === ext || entry === base;
+    }
+    return needle === ext || entry === base || needle === base;
+  });
+}
+
 /** 检查路径是否在黑名单中 */
 function isDeniedPath(relativePath: string, deniedPaths: string[]): string | null {
   const normalized = relativePath.replace(/\\/g, "/").toLowerCase();
@@ -225,6 +259,11 @@ export const fileWriteTool: Tool = {
           type: "string",
           description: "要写入的内容",
         },
+        encoding: {
+          type: "string",
+          description: "内容编码（默认 utf-8；允许 base64 以写入二进制）",
+          enum: ["utf-8", "base64"],
+        },
         mode: {
           type: "string",
           description: "写入模式（默认 overwrite）",
@@ -272,6 +311,11 @@ export const fileWriteTool: Tool = {
 
     const { absolute, relative } = pathResult;
 
+    // 受保护文件（优先拦截）
+    if (isProtectedFile(relative)) {
+      return makeError("禁止修改 SOUL.md");
+    }
+
     // 黑名单检查
     const denied = isDeniedPath(relative, context.policy.deniedPaths);
     if (denied) {
@@ -297,6 +341,23 @@ export const fileWriteTool: Tool = {
       }
     }
 
+    const fileWritePolicy = context.policy.fileWrite ?? {};
+    const allowDotFiles = fileWritePolicy.allowDotFiles !== false;
+    const allowedExtensions = normalizeExtensions(fileWritePolicy.allowedExtensions);
+
+    if (!allowDotFiles && isDotFile(relative)) {
+      return makeError("禁止写入点文件");
+    }
+
+    if (!isExtensionAllowed(relative, allowedExtensions)) {
+      return makeError(`文件扩展名不在允许列表中：${allowedExtensions.join(", ")}`);
+    }
+
+    const encoding = (args.encoding as "utf-8" | "base64") || "utf-8";
+    if (encoding === "base64" && fileWritePolicy.allowBinary !== true) {
+      return makeError("禁止写入二进制内容（base64）");
+    }
+
     // 写入文件
     const mode = (args.mode as "overwrite" | "append") || "overwrite";
     const createDirs = args.createDirs !== false; // 默认 true
@@ -307,13 +368,24 @@ export const fileWriteTool: Tool = {
         await fs.mkdir(path.dirname(absolute), { recursive: true });
       }
 
+      const writeBuffer = encoding === "base64" ? Buffer.from(content, "base64") : null;
+
       if (mode === "append") {
-        await fs.appendFile(absolute, content, "utf-8");
+        if (writeBuffer) {
+          await fs.appendFile(absolute, writeBuffer);
+        } else {
+          await fs.appendFile(absolute, content, "utf-8");
+        }
       } else {
-        await fs.writeFile(absolute, content, "utf-8");
+        if (writeBuffer) {
+          await fs.writeFile(absolute, writeBuffer);
+        } else {
+          await fs.writeFile(absolute, content, "utf-8");
+        }
       }
 
       const stat = await fs.stat(absolute);
+      const bytesWritten = writeBuffer ? writeBuffer.length : Buffer.byteLength(content, "utf-8");
 
       return {
         id,
@@ -321,8 +393,9 @@ export const fileWriteTool: Tool = {
         success: true,
         output: JSON.stringify({
           path: relative,
-          bytesWritten: Buffer.byteLength(content, "utf-8"),
+          bytesWritten,
           mode,
+          encoding,
           totalSize: stat.size,
         }),
         durationMs: Date.now() - start,
@@ -385,6 +458,11 @@ export const fileDeleteTool: Tool = {
     }
 
     const { relative } = pathResult;
+
+    // 受保护文件（优先拦截）
+    if (isProtectedFile(relative)) {
+      return makeError("禁止删除 SOUL.md");
+    }
 
     // 黑名单检查
     const denied = isDeniedPath(relative, context.policy.deniedPaths);

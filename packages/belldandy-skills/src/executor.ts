@@ -10,6 +10,11 @@ export const DEFAULT_POLICY: ToolPolicy = {
   deniedDomains: [],
   maxTimeoutMs: 30_000,
   maxResponseBytes: 512_000,
+  exec: {
+    quickTimeoutMs: 5_000,
+    longTimeoutMs: 300_000,
+    nonInteractive: { enabled: true },
+  },
 };
 
 /** Logger 接口，供工具在 context 中使用 */

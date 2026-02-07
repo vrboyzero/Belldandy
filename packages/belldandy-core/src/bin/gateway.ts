@@ -13,12 +13,15 @@ import {
 import {
   ToolExecutor,
   DEFAULT_POLICY,
+  type ToolPolicy,
   fetchTool,
+  applyPatchTool,
   fileReadTool,
   fileWriteTool,
   fileDeleteTool,
   listFilesTool,
   createMemorySearchTool,
+
   createMemoryGetTool,
   browserOpenTool,
   browserNavigateTool,
@@ -29,6 +32,7 @@ import {
   cameraSnapTool,
   imageGenerateTool,
   textToSpeechTool,
+  runCommandTool,
   methodListTool,
   methodReadTool,
   methodCreateTool,
@@ -125,6 +129,105 @@ const extraWorkspaceRoots = extraWorkspaceRootsRaw
 // Logger（尽早初始化，后续所有输出走统一日志）
 const logger = createLoggerFromEnv(stateDir);
 
+function normalizeStringArray(input: unknown): string[] | undefined {
+  if (!Array.isArray(input)) return undefined;
+  return input.map(v => String(v)).map(v => v.trim()).filter(Boolean);
+}
+
+function normalizeExecPolicy(input: unknown): ToolPolicy["exec"] | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const obj = input as Record<string, unknown>;
+  return {
+    quickTimeoutMs: typeof obj.quickTimeoutMs === "number" ? obj.quickTimeoutMs : undefined,
+    longTimeoutMs: typeof obj.longTimeoutMs === "number" ? obj.longTimeoutMs : undefined,
+    quickCommands: normalizeStringArray(obj.quickCommands),
+    longCommands: normalizeStringArray(obj.longCommands),
+    extraSafelist: normalizeStringArray(obj.extraSafelist),
+    extraBlocklist: normalizeStringArray(obj.extraBlocklist),
+    nonInteractive: obj.nonInteractive && typeof obj.nonInteractive === "object"
+      ? {
+        enabled: typeof (obj.nonInteractive as any).enabled === "boolean" ? (obj.nonInteractive as any).enabled : undefined,
+        additionalFlags: normalizeStringArray((obj.nonInteractive as any).additionalFlags),
+        defaultFlags: normalizeStringArray((obj.nonInteractive as any).defaultFlags),
+        rules: (obj.nonInteractive as any).rules && typeof (obj.nonInteractive as any).rules === "object"
+          ? (obj.nonInteractive as any).rules as Record<string, string[] | string>
+          : undefined,
+      }
+      : undefined,
+  };
+}
+
+function normalizeFileWritePolicy(input: unknown): ToolPolicy["fileWrite"] | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const obj = input as Record<string, unknown>;
+  return {
+    allowedExtensions: normalizeStringArray(obj.allowedExtensions),
+    allowDotFiles: typeof obj.allowDotFiles === "boolean" ? obj.allowDotFiles : undefined,
+    allowBinary: typeof obj.allowBinary === "boolean" ? obj.allowBinary : undefined,
+  };
+}
+
+function normalizeToolsPolicy(input: unknown): Partial<ToolPolicy> | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const obj = input as Record<string, unknown>;
+  return {
+    allowedPaths: normalizeStringArray(obj.allowedPaths),
+    deniedPaths: normalizeStringArray(obj.deniedPaths),
+    allowedDomains: normalizeStringArray(obj.allowedDomains),
+    deniedDomains: normalizeStringArray(obj.deniedDomains),
+    maxTimeoutMs: typeof obj.maxTimeoutMs === "number" ? obj.maxTimeoutMs : undefined,
+    maxResponseBytes: typeof obj.maxResponseBytes === "number" ? obj.maxResponseBytes : undefined,
+    exec: normalizeExecPolicy(obj.exec),
+    fileWrite: normalizeFileWritePolicy(obj.fileWrite),
+  };
+}
+
+
+function mergePolicy(base: ToolPolicy, override?: Partial<ToolPolicy>): ToolPolicy {
+  if (!override) return base;
+  return {
+    ...base,
+    ...override,
+    exec: {
+      ...(base.exec ?? {}),
+      ...(override.exec ?? {}),
+      nonInteractive: {
+        ...(base.exec?.nonInteractive ?? {}),
+        ...(override.exec?.nonInteractive ?? {}),
+      },
+    },
+    fileWrite: {
+      ...(base.fileWrite ?? {}),
+      ...(override.fileWrite ?? {}),
+    },
+  };
+}
+
+
+function loadToolsPolicy(filePath: string, log: typeof logger): Partial<ToolPolicy> | undefined {
+  try {
+    const resolved = path.resolve(filePath);
+    const raw = fs.readFileSync(resolved, "utf-8");
+    const parsed = JSON.parse(raw) as unknown;
+    const normalized = normalizeToolsPolicy(parsed);
+    if (!normalized) {
+      log.warn("tools", `BELLDANDY_TOOLS_POLICY_FILE is not a valid object: ${resolved}`);
+      return undefined;
+    }
+    log.info("tools", `Loaded tools policy from ${resolved}`);
+    return normalized;
+  } catch (err) {
+    log.warn("tools", `Failed to load tools policy: ${String(err)}`);
+    return undefined;
+  }
+}
+
+const toolsPolicyFile = readEnv("BELLDANDY_TOOLS_POLICY_FILE");
+const toolsPolicyFromFile = toolsPolicyFile ? loadToolsPolicy(toolsPolicyFile, logger) : undefined;
+const toolsPolicy = mergePolicy(DEFAULT_POLICY, toolsPolicyFromFile);
+
+
+
 // Agent & Tools
 const agentProvider = (readEnv("BELLDANDY_AGENT_PROVIDER") ?? "mock") as "mock" | "openai";
 const openaiBaseUrl = readEnv("BELLDANDY_OPENAI_BASE_URL");
@@ -140,7 +243,9 @@ const agentTimeoutMs = agentTimeoutMsRaw ? Math.max(5000, parseInt(agentTimeoutM
 // MCP
 const mcpEnabled = (readEnv("BELLDANDY_MCP_ENABLED") ?? "false") === "true";
 
+
 // --- Activity Tracking ---
+
 let lastActiveTime = 0;
 const onActivity = () => {
   lastActiveTime = Date.now();
@@ -213,12 +318,16 @@ if (embeddingEnabled && !openaiApiKey) {
 const toolsToRegister = toolsEnabled
   ? [
     fetchTool,
+    applyPatchTool,
     fileReadTool,
     fileWriteTool,
     fileDeleteTool,
     listFilesTool,
+    runCommandTool,
 
     createMemorySearchTool(),
+
+
     createMemoryGetTool(),
     browserOpenTool,
     browserNavigateTool,
@@ -242,7 +351,8 @@ const toolExecutor = new ToolExecutor({
   tools: toolsToRegister,
   workspaceRoot: stateDir, // Use ~/.belldandy as the workspace root for file operations
   extraWorkspaceRoots, // 额外允许 file_read/file_write/file_delete 的根目录（如其他盘符）
-  policy: DEFAULT_POLICY, // TODO: Load from BELLDANDY_TOOLS_POLICY_FILE if needed
+  policy: toolsPolicy,
+
   auditLogger: (log) => {
     const msg = log.success
       ? `${log.toolName} completed in ${log.durationMs}ms`
@@ -259,7 +369,9 @@ const toolExecutor = new ToolExecutor({
 
 // 4. Log enabled tools
 if (toolsEnabled) {
-  logger.info("tools", "Tools enabled: web_fetch, file_read, file_write, file_delete, list_files, memory_search, memory_get, browser_*, log_read, log_search");
+  logger.info("tools", "Tools enabled: web_fetch, apply_patch, file_read, file_write, file_delete, list_files, run_command, memory_search, memory_get, browser_*, log_read, log_search");
+
+
 }
 
 // 4.1 Initialize MCP and register MCP tools

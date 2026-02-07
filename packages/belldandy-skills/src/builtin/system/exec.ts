@@ -1,5 +1,5 @@
-import type { Tool, ToolCallResult } from "../../types.js";
-import { spawn } from "node:child_process";
+import type { Tool, ToolCallResult, ToolExecPolicy } from "../../types.js";
+import { spawn, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import path from "node:path";
 
@@ -9,25 +9,46 @@ const BLOCKLIST = new Set([
     ":(){:|:&};:" // Fork bomb
 ]);
 
+// 受保护文件（禁止通过 exec 触达）
+const PROTECTED_FILES = ["soul.md"];
+
 // 通用命令（所有平台）
 const COMMON_SAFELIST = [
-    "pwd", "whoami", "date", "echo", "cat", "grep", "head", "tail",
-    "git", "npm", "pnpm", "node", "yarn", "bun",
-    "touch", "mkdir", "cp", "mv", "rmdir",
-    "ps", "df", "du"
+    // 核心系统/文本
+    "pwd", "whoami", "date", "echo", "cat", "grep", "head", "tail", "less",
+    // JS/TS
+    "git", "npm", "pnpm", "node", "yarn", "bun", "npx", "tsc", "vite", "next",
+    // Python
+    "python", "python3", "pip", "pip3", "pipenv", "conda", "pytest",
+    // 编译/底层
+    "gcc", "g++", "make", "cmake", "cargo", "go",
+    // 其他语言工具
+    "java", "mvn", "dotnet",
+    // 文件与进程
+    "touch", "mkdir", "cp", "mv", "rmdir", "rm",
+    "ps", "df", "du", "hostname",
+    // 网络/传输
+    "curl", "wget", "scp", "rsync",
+    // 文件搜索/过滤
+    "rg", "fd", "jq", "yq",
+    // 媒体与文档
+    "ffmpeg", "magick", "pandoc",
+    // 常见 create-* 初始化命令
+    "create-react-app",
 ];
 
 // Unix 特定命令 (Linux + macOS)
 const UNIX_SAFELIST = [
     "ls", "top", "free", "chmod", "chown", "ln", "which", "find", "xargs",
-    "curl", "wget", "tar", "gzip", "gunzip", "zip", "unzip",
-    "open"  // macOS 特有：打开文件/URL
+    "tar", "gzip", "gunzip", "zip", "unzip",
+    "open",  // macOS 特有：打开文件/URL
+    "ssh", "ping", "netstat",
 ];
 
 // Windows 特定命令
 const WINDOWS_SAFELIST = [
-    "dir", "copy", "move", "del", "ren", "type", 
-    "ipconfig", "netstat", "tasklist", "where",
+    "dir", "copy", "move", "del", "ren", "type", "ls",
+    "ipconfig", "netstat", "tasklist", "where", "ping", "hostname",
     "start"  // Windows 特有：打开文件/URL
 ];
 
@@ -45,12 +66,192 @@ function buildSafelist(): Set<string> {
 
 const SAFELIST = buildSafelist();
 
-// 风险参数检测
-const RISKY_ARGS = [
-    { cmd: "rm", args: ["-r", "-f", "-rf", "-fr"], msg: "Recursive/Force deletion is blocked. Use file tools." }
+const DEFAULT_EXEC_POLICY: Required<ToolExecPolicy> = {
+    quickTimeoutMs: 5_000,
+    longTimeoutMs: 300_000,
+    quickCommands: [],
+    longCommands: [],
+    extraSafelist: [],
+    extraBlocklist: [],
+    nonInteractive: {
+        enabled: true,
+        additionalFlags: [],
+        defaultFlags: [],
+        rules: {},
+    },
+};
+
+const ENV_FILE_PATTERN = /\.env(\.|$)/i;
+const ENV_READ_KEYWORDS = ["cat", "type", "more", "less", "head", "tail", "grep", "rg", "sed", "awk", "get-content"];
+const NON_INTERACTIVE_FLAGS = ["--yes", "-y", "--assume-yes", "--non-interactive", "--no-interaction"];
+
+const QUICK_COMMANDS = new Set([
+    "pwd", "whoami", "date", "echo", "git", "ls", "dir", "cat", "head", "tail",
+    "rg", "fd", "jq", "yq", "hostname", "df", "du", "netstat", "ping", "ipconfig", "tasklist", "where"
+]);
+
+const LONG_COMMANDS = new Set([
+    "npm", "pnpm", "yarn", "npx", "node", "python", "python3", "pip", "pip3", "pipenv", "conda", "pytest",
+    "tsc", "vite", "next", "gcc", "g++", "make", "cmake", "cargo", "go", "java", "mvn", "dotnet",
+    "ffmpeg", "pandoc", "magick"
+]);
+
+const DEFAULT_NON_INTERACTIVE_RULES: Array<{ cmd: string; sub?: string[]; flags: string[] }> = [
+    { cmd: "npm", sub: ["init"], flags: ["-y"] },
+    { cmd: "npx", flags: ["--yes"] },
+    { cmd: "yarn", flags: ["--non-interactive"] },
+    { cmd: "pnpm", sub: ["dlx", "create", "init"], flags: ["--yes"] },
+    { cmd: "conda", sub: ["install", "update", "remove", "uninstall", "create"], flags: ["-y"] },
 ];
 
-function validateCommand(cmd: string): { valid: boolean; reason?: string } {
+function normalizeExecPolicy(policy?: ToolExecPolicy): Required<ToolExecPolicy> {
+    if (!policy) return DEFAULT_EXEC_POLICY;
+    return {
+        quickTimeoutMs: policy.quickTimeoutMs ?? DEFAULT_EXEC_POLICY.quickTimeoutMs,
+        longTimeoutMs: policy.longTimeoutMs ?? DEFAULT_EXEC_POLICY.longTimeoutMs,
+        quickCommands: policy.quickCommands ?? DEFAULT_EXEC_POLICY.quickCommands,
+        longCommands: policy.longCommands ?? DEFAULT_EXEC_POLICY.longCommands,
+        extraSafelist: policy.extraSafelist ?? DEFAULT_EXEC_POLICY.extraSafelist,
+        extraBlocklist: policy.extraBlocklist ?? DEFAULT_EXEC_POLICY.extraBlocklist,
+        nonInteractive: {
+            enabled: policy.nonInteractive?.enabled ?? DEFAULT_EXEC_POLICY.nonInteractive.enabled,
+            additionalFlags: policy.nonInteractive?.additionalFlags ?? DEFAULT_EXEC_POLICY.nonInteractive.additionalFlags,
+            defaultFlags: policy.nonInteractive?.defaultFlags ?? DEFAULT_EXEC_POLICY.nonInteractive.defaultFlags,
+            rules: policy.nonInteractive?.rules ?? DEFAULT_EXEC_POLICY.nonInteractive.rules,
+        },
+    };
+}
+
+function normalizeList(list?: string[]): string[] {
+    if (!Array.isArray(list)) return [];
+    return list.map(v => v.trim()).filter(Boolean);
+}
+
+function buildSafelistWithPolicy(policy: Required<ToolExecPolicy>): Set<string> {
+    const base = new Set(SAFELIST);
+    for (const cmd of normalizeList(policy.extraSafelist)) {
+        base.add(cmd.toLowerCase());
+    }
+    for (const cmd of normalizeList(policy.extraBlocklist)) {
+        base.delete(cmd.toLowerCase());
+    }
+    return base;
+}
+
+function buildBlocklistWithPolicy(policy: Required<ToolExecPolicy>): Set<string> {
+    const base = new Set(Array.from(BLOCKLIST));
+    for (const cmd of normalizeList(policy.extraBlocklist)) {
+        base.add(cmd.toLowerCase());
+    }
+    return base;
+}
+
+function buildCommandSet(defaultSet: Set<string>, extra?: string[]): Set<string> {
+    const set = new Set(defaultSet);
+    for (const cmd of normalizeList(extra)) {
+        set.add(cmd.toLowerCase());
+    }
+    return set;
+}
+
+function parsePolicyRules(rules: Record<string, string[] | string>): Array<{ cmd: string; sub?: string[]; flags: string[] }> {
+    const parsed: Array<{ cmd: string; sub?: string[]; flags: string[] }> = [];
+    for (const [key, value] of Object.entries(rules ?? {})) {
+        const trimmed = key.trim().toLowerCase();
+        if (!trimmed) continue;
+        const parts = trimmed.split(/\s+/);
+        const cmd = parts[0];
+        const sub = parts.length > 1 ? [parts[1]] : undefined;
+        const flags = Array.isArray(value) ? value.map(v => String(v)) : [String(value)];
+        parsed.push({ cmd, sub, flags });
+    }
+    return parsed;
+}
+
+function containsProtectedPath(command: string): boolean {
+    const lower = command.toLowerCase();
+    return PROTECTED_FILES.some(p => lower.includes(p));
+}
+
+function isEnvReadAttempt(command: string): boolean {
+    const lower = command.toLowerCase();
+    if (!ENV_FILE_PATTERN.test(lower)) return false;
+    return ENV_READ_KEYWORDS.some(k => lower.includes(`${k} `) || lower.startsWith(`${k} `));
+}
+
+function applyNonInteractiveFlags(command: string, policy: Required<ToolExecPolicy>): string {
+    if (!policy.nonInteractive.enabled) return command;
+
+    const trimmed = command.trim();
+    if (!trimmed) return trimmed;
+
+    const lower = trimmed.toLowerCase();
+    const detectionFlags = new Set([
+        ...NON_INTERACTIVE_FLAGS,
+        ...normalizeList(policy.nonInteractive.additionalFlags),
+        ...normalizeList(policy.nonInteractive.defaultFlags),
+    ]);
+
+    for (const flag of detectionFlags) {
+        if (flag && lower.includes(flag.toLowerCase())) return trimmed;
+    }
+
+    const parts = trimmed.split(/\s+/);
+    const executable = parts[0]?.toLowerCase() ?? "";
+    const sub = parts[1]?.toLowerCase();
+
+    const rules = [
+        ...DEFAULT_NON_INTERACTIVE_RULES,
+        ...parsePolicyRules(policy.nonInteractive.rules ?? {}),
+    ];
+
+    for (const rule of rules) {
+        if (rule.cmd !== executable) continue;
+        if (rule.sub && (!sub || !rule.sub.includes(sub))) continue;
+        const flags = normalizeList(rule.flags);
+        if (flags.length > 0) return `${trimmed} ${flags.join(" ")}`;
+    }
+
+    const defaultFlags = normalizeList(policy.nonInteractive.defaultFlags);
+    if (defaultFlags.length > 0) {
+        return `${trimmed} ${defaultFlags.join(" ")}`;
+    }
+
+    return trimmed;
+}
+
+function determineTimeoutMs(command: string, provided: number | undefined, policy: Required<ToolExecPolicy>): number {
+    if (typeof provided === "number" && provided > 0) return provided;
+    const executable = command.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+    const quickSet = buildCommandSet(QUICK_COMMANDS, policy.quickCommands);
+    const longSet = buildCommandSet(LONG_COMMANDS, policy.longCommands);
+    if (longSet.has(executable)) return policy.longTimeoutMs;
+    if (quickSet.has(executable)) return policy.quickTimeoutMs;
+    return policy.quickTimeoutMs;
+}
+
+function killChildProcess(child: ChildProcess): void {
+    try {
+        child.kill("SIGKILL");
+        return;
+    } catch {
+        // ignore
+    }
+    try {
+        child.kill();
+    } catch {
+        // ignore
+    }
+    if (child.pid) {
+        try {
+            process.kill(child.pid, "SIGKILL");
+        } catch {
+            // ignore
+        }
+    }
+}
+
+function validateCommand(cmd: string, safelist: Set<string>, blocklist: Set<string>): { valid: boolean; reason?: string } {
     const trimmed = cmd.trim();
     if (!trimmed) return { valid: false, reason: "Empty command" };
 
@@ -59,18 +260,17 @@ function validateCommand(cmd: string): { valid: boolean; reason?: string } {
     const executable = parts[0].toLowerCase(); // Windows 命令不区分大小写，统一转小写判断
 
     // 2. 检查黑名单
-    if (BLOCKLIST.has(executable)) {
+    if (blocklist.has(executable)) {
         return { valid: false, reason: `Command '${executable}' is blocked by security policy.` };
     }
 
     // 3. 检查白名单
     // 注意：如果我们不在白名单中，默认拒绝（Strict Mode）
-    // 或者：如果不严格，可以放行非黑名单。考虑到用户要求"普通用户模式"，建议只放行常见开发工具。
-    // 为了灵活性，我们允许绝对路径执行（只要不是黑名单），但给出警告日志？
-    // 不，MVP 阶段严格一点：只允许 SAFELIST 内的命令 或者 看起来像本地脚本的 (./script.sh)
+    // 为了灵活性，我们允许本地脚本与 create-* 命令
     const isLocalScript = executable.startsWith("./") || executable.startsWith("../") || executable.endsWith(".sh") || executable.endsWith(".js");
+    const isCreateCommand = executable.startsWith("create-");
 
-    if (!SAFELIST.has(executable) && !isLocalScript) {
+    if (!safelist.has(executable) && !isLocalScript && !isCreateCommand) {
         // 允许 rm/del 但要检查参数
         if (executable === "rm" || executable === "del") {
             // pass to arg check
@@ -93,7 +293,7 @@ function validateCommand(cmd: string): { valid: boolean; reason?: string } {
         const args = parts.slice(1).join(" ").toLowerCase();
         // /s (recursive), /q (quiet mode), /f (force) - Windows style
         if (args.includes("/s") || args.includes("/q") || args.includes("/f")) {
-            return { valid: false, reason: "Recursive/Queit deletion with 'del' is blocked. Please use 'delete_file' tool or manual verification." };
+            return { valid: false, reason: "Recursive/Quiet deletion with 'del' is blocked. Please use 'delete_file' tool or manual verification." };
         }
     }
 
@@ -144,20 +344,40 @@ export const runCommandTool: Tool = {
             durationMs: Date.now() - start,
         });
 
-        const command = args.command as string;
-        if (!command || typeof command !== "string") {
+        const commandRaw = args.command as string;
+        if (!commandRaw || typeof commandRaw !== "string") {
             return makeResult(false, "", "Command is required");
         }
 
+        // 路径拦截优先：禁止触达 SOUL.md
+        if (containsProtectedPath(commandRaw)) {
+            const reason = "Access to protected file 'SOUL.md' is blocked.";
+            context.logger?.warn(`[Security Block] ${commandRaw} -> ${reason}`);
+            return makeResult(false, "", `Security Error: ${reason}`);
+        }
+
+        // 环境变量保护：禁止通过 exec 读取 .env
+        if (isEnvReadAttempt(commandRaw)) {
+            const reason = "Reading .env via exec is forbidden.";
+            context.logger?.warn(`[Security Block] ${commandRaw} -> ${reason}`);
+            return makeResult(false, "", `Security Error: ${reason}`);
+        }
+
+        const execPolicy = normalizeExecPolicy(context.policy.exec);
+        const safelist = buildSafelistWithPolicy(execPolicy);
+        const blocklist = buildBlocklistWithPolicy(execPolicy);
+
+        const command = applyNonInteractiveFlags(commandRaw, execPolicy);
+
         // 安全验证
-        const validation = validateCommand(command);
+        const validation = validateCommand(command, safelist, blocklist);
         if (!validation.valid) {
             context.logger?.warn(`[Security Block] ${command} -> ${validation.reason}`);
             return makeResult(false, "", `Security Error: ${validation.reason}`);
         }
 
         const cwd = args.cwd ? path.resolve(context.workspaceRoot, args.cwd as string) : context.workspaceRoot;
-        const timeoutMs = typeof args.timeoutMs === "number" ? args.timeoutMs : 5000;
+        const timeoutMs = determineTimeoutMs(command, args.timeoutMs as number | undefined, execPolicy);
 
         context.logger?.info(`[exec] Run: ${command} in ${cwd}`);
 
@@ -172,7 +392,7 @@ export const runCommandTool: Tool = {
             let stderr = "";
 
             const timeoutTimer = setTimeout(() => {
-                child.kill();
+                killChildProcess(child);
                 resolve(makeResult(false, stdout, `Timeout after ${timeoutMs}ms\nStderr: ${stderr}`));
             }, timeoutMs);
 

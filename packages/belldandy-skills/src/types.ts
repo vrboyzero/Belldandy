@@ -38,6 +38,42 @@ export type ToolCallResult = {
   durationMs: number;
 };
 
+/** 运行命令策略 */
+export type ToolExecPolicy = {
+  /** 快速命令超时（毫秒） */
+  quickTimeoutMs?: number;
+  /** 构建/长任务超时（毫秒） */
+  longTimeoutMs?: number;
+  /** 额外标记为快速命令的可执行名 */
+  quickCommands?: string[];
+  /** 额外标记为长任务的可执行名 */
+  longCommands?: string[];
+  /** 额外允许的命令（加入 safelist） */
+  extraSafelist?: string[];
+  /** 额外禁止的命令（加入 blocklist） */
+  extraBlocklist?: string[];
+  /** 非交互参数策略 */
+  nonInteractive?: {
+    enabled?: boolean;
+    /** 额外识别的非交互标记 */
+    additionalFlags?: string[];
+    /** 默认追加到所有命令的标记（谨慎使用） */
+    defaultFlags?: string[];
+    /** 特定命令的追加规则：key 支持 "cmd" 或 "cmd sub" */
+    rules?: Record<string, string[] | string>;
+  };
+};
+
+/** 文件写入策略 */
+export type ToolFileWritePolicy = {
+  /** 允许写入的扩展名（为空表示不限制） */
+  allowedExtensions?: string[];
+  /** 是否允许点文件（如 .gitignore） */
+  allowDotFiles?: boolean;
+  /** 是否允许 base64 写入（二进制） */
+  allowBinary?: boolean;
+};
+
 /** 权限策略 */
 export type ToolPolicy = {
   /** 文件读取允许路径（空 = 不限制，仅检查工作区边界） */
@@ -52,6 +88,10 @@ export type ToolPolicy = {
   maxTimeoutMs: number;
   /** 最大响应大小（字节） */
   maxResponseBytes: number;
+  /** 命令执行策略（可选） */
+  exec?: ToolExecPolicy;
+  /** 文件写入策略（可选） */
+  fileWrite?: ToolFileWritePolicy;
 };
 
 export type SubAgentResult = {
