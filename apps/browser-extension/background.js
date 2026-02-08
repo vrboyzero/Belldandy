@@ -9,6 +9,27 @@ let relayConnectPromise = null;
 const tabs = new Map(); // tabId -> { sessionId, targetId, state }
 const tabBySession = new Map(); // sessionId -> tabId
 
+// =========================================
+// KEEP-ALIVE: 防止 MV3 Service Worker 被挂起
+// =========================================
+const KEEP_ALIVE_ALARM_NAME = "belldandy-keepalive";
+const KEEP_ALIVE_INTERVAL_MINUTES = 0.4; // ~24 秒，低于 30 秒挂起阈值
+
+// 使用 Chrome Alarms API 保持 Service Worker 活跃
+chrome.alarms.create(KEEP_ALIVE_ALARM_NAME, {
+    periodInMinutes: KEEP_ALIVE_INTERVAL_MINUTES
+});
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === KEEP_ALIVE_ALARM_NAME) {
+        // 发送心跳 ping 保持 WebSocket 连接
+        if (relayWs && relayWs.readyState === WebSocket.OPEN) {
+            relayWs.send(JSON.stringify({ method: "ping" }));
+            console.log("[Belldandy] Keep-alive ping sent");
+        }
+    }
+});
+
 async function getRelayPort() {
     const stored = await chrome.storage.local.get(['relayPort']);
     const n = parseInt(stored.relayPort, 10);
@@ -17,7 +38,17 @@ async function getRelayPort() {
 
 // 连接到 Relay Server
 async function ensureRelayConnection() {
-    if (relayWs && relayWs.readyState === WebSocket.OPEN) return;
+    // 【修复】检查 WebSocket 状态，如果已关闭或正在关闭，清理引用
+    if (relayWs) {
+        if (relayWs.readyState === WebSocket.OPEN) {
+            return; // 已连接，无需操作
+        }
+        if (relayWs.readyState === WebSocket.CLOSING || relayWs.readyState === WebSocket.CLOSED) {
+            console.log("[Belldandy] Cleaning up closed WebSocket");
+            relayWs = null;
+        }
+    }
+
     if (relayConnectPromise) return await relayConnectPromise;
 
     relayConnectPromise = (async () => {
@@ -25,6 +56,7 @@ async function ensureRelayConnection() {
         const wsUrl = `ws://127.0.0.1:${port}/extension`;
 
         console.log(`[Belldandy] Connecting to Relay at ${wsUrl}...`);
+        setBadge("...", "#2196F3"); // Blue
 
         try {
             const ws = new WebSocket(wsUrl);
@@ -32,14 +64,24 @@ async function ensureRelayConnection() {
 
             await new Promise((resolve, reject) => {
                 const t = setTimeout(() => reject(new Error("Timeout")), 5000);
-                ws.onopen = () => { clearTimeout(t); resolve(); };
-                ws.onerror = () => { clearTimeout(t); reject(new Error("Connection Failed")); };
+                ws.onopen = () => {
+                    clearTimeout(t);
+                    console.log("[Belldandy] Relay Connected");
+                    setBadge("ON", "#4CAF50"); // Green
+                    resolve();
+                };
+                ws.onerror = () => {
+                    clearTimeout(t);
+                    console.error("[Belldandy] Connection Failed");
+                    setBadge("ERR", "#F44336"); // Red
+                    reject(new Error("Connection Failed"));
+                };
             });
-            console.log("[Belldandy] Relay Connected");
 
             ws.onmessage = (event) => onRelayMessage(event.data);
             ws.onclose = () => {
                 console.log("[Belldandy] Relay Disconnected");
+                setBadge("OFF", "#F44336"); // Red
                 relayWs = null;
             };
 
@@ -81,16 +123,61 @@ async function onRelayMessage(data) {
     }
 }
 
+// =========================================
+// PROTECTED TABS: 保护 WebChat 等关键页面不被导航替换
+// =========================================
+const PROTECTED_URL_PATTERNS = [
+    /^https?:\/\/(localhost|127\.0\.0\.1):\d+\/?$/,  // Gateway WebChat (any port)
+    /^https?:\/\/(localhost|127\.0\.0\.1):\d+\/webchat/i,  // WebChat 路径
+    /belldandy/i  // 任何包含 belldandy 的 URL
+];
+
+async function isProtectedTab(tabId) {
+    try {
+        const tab = await chrome.tabs.get(tabId);
+        if (!tab?.url) return false;
+        return PROTECTED_URL_PATTERNS.some(pattern => pattern.test(tab.url));
+    } catch {
+        return false;
+    }
+}
+
 // 执行 CDP 指令
 async function handleCdpCommand(method, params, sessionId) {
+    // 判断是否是导航类命令
+    const isNavigationCommand = method === "Page.navigate" || method === "Page.navigateToHistoryEntry";
+
     // 1. 查找目标 Tab
     let tabId;
     if (sessionId) {
         tabId = tabBySession.get(sessionId);
-    } else {
-        // 如果没有指定 sessionId，尝试查找当前已连接的一个 Tab，或者激活的 Tab
+        // 【关键修复】如果有 sessionId 但找不到对应 tab，对于导航命令直接报错
+        // 不要回退到 active tab，避免替换 WebChat
+        if (!tabId && isNavigationCommand) {
+            console.error(`[Belldandy] Session ${sessionId} not found for navigation command`);
+            throw new Error(`Session ${sessionId} not found. Cannot fallback to active tab for navigation.`);
+        }
+    }
+
+    // 如果没有找到 tabId，尝试使用 active tab（仅限非导航命令）
+    if (!tabId) {
         const [active] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (active) tabId = active.id;
+        if (active) {
+            // 【保护检查】对于导航命令，绝不使用受保护的标签页
+            if (isNavigationCommand && await isProtectedTab(active.id)) {
+                console.warn(`[Belldandy] BLOCKED: Active tab ${active.id} is protected, refusing to navigate`);
+                throw new Error("Cannot navigate: active tab is protected (WebChat). Use browser_open to create a new tab.");
+            }
+            tabId = active.id;
+        }
+    }
+
+    // 【双重保护】即使通过 session 找到了 tabId，也再检查一次
+    if (tabId && isNavigationCommand) {
+        if (await isProtectedTab(tabId)) {
+            console.warn(`[Belldandy] BLOCKED: Refusing to navigate protected tab ${tabId}`);
+            throw new Error("Cannot navigate protected tab (WebChat). Use browser_open to create a new tab instead.");
+        }
     }
 
     if (!tabId) throw new Error("No target tab found");
@@ -99,8 +186,38 @@ async function handleCdpCommand(method, params, sessionId) {
     if (method === "Target.createTarget") {
         const url = params?.url || "about:blank";
         const tab = await chrome.tabs.create({ url, active: false });
+        const newTabId = tab.id;
+
+        // 【关键修复】创建标签页后立即 attach 并设置 session 映射
+        // 这样后续的 navigate 命令才能找到正确的标签页
+        try {
+            await chrome.debugger.attach({ tabId: newTabId }, "1.3");
+            const newSessionId = `session-${newTabId}-${Date.now()}`;
+
+            tabs.set(newTabId, { sessionId: newSessionId, targetId: String(newTabId), state: "attached" });
+            tabBySession.set(newSessionId, newTabId);
+
+            // 通知 Relay 新标签页已连接
+            sendEventToRelay("Target.attachedToTarget", {
+                sessionId: newSessionId,
+                targetInfo: {
+                    targetId: String(newTabId),
+                    type: "page",
+                    url: url,
+                    title: "New Tab",
+                    attached: true,
+                    browserContextId: "default-context"
+                },
+                waitingForDebugger: false
+            });
+
+            console.log(`[Belldandy] Created and attached to new tab ${newTabId} with session ${newSessionId}`);
+        } catch (attachErr) {
+            console.warn(`[Belldandy] Failed to auto-attach to new tab ${newTabId}:`, attachErr.message);
+        }
+
         // NOTE: Puppeteer expects { targetId }
-        return { targetId: String(tab.id) };
+        return { targetId: String(newTabId) };
     }
 
     // special case: Target.attachToTarget
@@ -235,8 +352,27 @@ function sendEventToRelay(method, params, sessionId) {
     }
 }
 
+// 状态指示器
+function setBadge(text, color) {
+    chrome.action.setBadgeText({ text });
+    chrome.action.setBadgeBackgroundColor({ color });
+}
+
+// 初始化状态
+setBadge("OFF", "#F44336");
+
 // 点击图标时连接
 chrome.action.onClicked.addListener(async () => {
+    console.log("[Belldandy] User clicked action icon. Forcing reconnection...");
+
+    // 强制清理现有连接
+    if (relayWs) {
+        try { relayWs.close(); } catch (e) { }
+        relayWs = null;
+    }
+    relayConnectPromise = null;
+
+    // 尝试重连
     try {
         await ensureRelayConnection();
         // 主动 attach 当前 tab
@@ -245,6 +381,58 @@ chrome.action.onClicked.addListener(async () => {
             handleCdpCommand("Page.enable", {}, null); // 触发 attach 逻辑
         }
     } catch (e) {
-        console.error(e);
+        console.error("Manual connection failed:", e);
+        setBadge("ERR", "#F44336");
     }
 });
+
+// =========================================
+// AUTO-CONNECT: 扩展启动时自动连接到 Relay
+// =========================================
+let autoConnectRetries = 0;
+const MAX_AUTO_RETRIES = 10;
+const AUTO_RETRY_DELAY = 3000; // 3 秒
+
+async function autoConnectToRelay() {
+    while (autoConnectRetries < MAX_AUTO_RETRIES) {
+        try {
+            await ensureRelayConnection();
+            console.log("[Belldandy] Auto-connect succeeded!");
+            autoConnectRetries = 0; // 重置计数器
+            return;
+        } catch (err) {
+            autoConnectRetries++;
+            console.log(`[Belldandy] Auto-connect attempt ${autoConnectRetries}/${MAX_AUTO_RETRIES} failed, retrying in ${AUTO_RETRY_DELAY}ms...`);
+            await new Promise(resolve => setTimeout(resolve, AUTO_RETRY_DELAY));
+        }
+    }
+    console.warn("[Belldandy] Auto-connect exhausted all retries. Click the extension icon to connect manually.");
+}
+
+// 启动时尝试自动连接
+autoConnectToRelay();
+
+// 断开时自动重连
+function setupAutoReconnect() {
+    const originalOnClose = () => {
+        console.log("[Belldandy] Relay Disconnected, will auto-reconnect...");
+        relayWs = null;
+        // 延迟重连
+        setTimeout(() => {
+            autoConnectRetries = 0;
+            autoConnectToRelay();
+        }, 2000);
+    };
+
+    // Patch ensureRelayConnection to add reconnect listener
+    const originalEnsure = ensureRelayConnection;
+    ensureRelayConnection = async function () {
+        await originalEnsure();
+        if (relayWs && !relayWs._autoReconnectPatched) {
+            relayWs._autoReconnectPatched = true;
+            relayWs.addEventListener('close', originalOnClose);
+        }
+    };
+}
+
+setupAutoReconnect();

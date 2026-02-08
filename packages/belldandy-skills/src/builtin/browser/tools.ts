@@ -2,11 +2,61 @@ import puppeteer, { Browser, Page } from "puppeteer-core";
 import { Tool, ToolContext, ToolCallResult } from "../../types.js";
 import path from "node:path";
 import fs from "node:fs/promises";
+import WebSocket from "ws";
 
 // Relay Server runs on port 28892 by default
 const RELAY_WS_ENDPOINT = "ws://127.0.0.1:28892/cdp";
 
 import { SNAPSHOT_SCRIPT } from "./snapshot.js";
+
+// =========================================
+// Direct CDP Helper - 绕过 Puppeteer 的 session 管理
+// =========================================
+async function sendCdpCommand(
+    method: string,
+    params: Record<string, unknown> = {},
+    timeout = 15000
+): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+        const ws = new WebSocket(RELAY_WS_ENDPOINT);
+        const timeoutId = setTimeout(() => {
+            ws.close();
+            reject(new Error(`CDP command ${method} timed out after ${timeout}ms`));
+        }, timeout);
+
+        const id = Date.now();
+
+        ws.on("open", () => {
+            ws.send(JSON.stringify({ id, method, params }));
+        });
+
+        ws.on("message", (data) => {
+            try {
+                const msg = JSON.parse(data.toString());
+                if (msg.id === id) {
+                    clearTimeout(timeoutId);
+                    ws.close();
+                    if (msg.error) {
+                        reject(new Error(msg.error.message || msg.error));
+                    } else {
+                        resolve(msg.result);
+                    }
+                }
+            } catch (err) {
+                // Ignore parse errors for events
+            }
+        });
+
+        ws.on("error", (err) => {
+            clearTimeout(timeoutId);
+            reject(err);
+        });
+
+        ws.on("close", () => {
+            clearTimeout(timeoutId);
+        });
+    });
+}
 
 // [SECURITY] 域名控制（双模式）
 const ALLOWED_DOMAINS_RAW = process.env.BELLDANDY_BROWSER_ALLOWED_DOMAINS;
@@ -152,7 +202,7 @@ const failure = (id: string, name: string, error: unknown, start: number): ToolC
 export const browserOpenTool: Tool = {
     definition: {
         name: "browser_open",
-        description: "Open the browser (connect if needed) and navigate to a URL. Use this to start a browsing session.",
+        description: "Open a NEW browser tab and navigate to a URL. Use this to start a browsing session without affecting the current page.",
         parameters: {
             type: "object",
             properties: {
@@ -172,19 +222,22 @@ export const browserOpenTool: Tool = {
                 return failure("unknown", "browser_open", validation.error, start);
             }
 
-            const manager = BrowserManager.getInstance();
-            const page = await manager.getPage();
+            console.log(`[browser_open] Creating new tab for URL: ${url}`);
 
-            // Navigate
-            await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+            // 使用直接 CDP 命令创建标签页（绕过 Puppeteer 的 session 管理）
+            // 扩展的 Target.createTarget 会直接创建带 URL 的标签页
+            const result = await sendCdpCommand("Target.createTarget", { url }) as { targetId: string };
+
+            console.log(`[browser_open] Successfully created tab with targetId: ${result.targetId}`);
 
             return success(
-                "unknown", // ID injected by executor usually
+                "unknown",
                 "browser_open",
-                `Opened browser and navigated to ${url}`,
+                `成功打开新标签页: ${url}`,
                 start
             );
         } catch (err) {
+            console.error(`[browser_open] Failed:`, err);
             return failure("unknown", "browser_open", err, start);
         }
     },

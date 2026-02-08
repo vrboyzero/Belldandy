@@ -40,6 +40,24 @@ flowchart TB
   GW -->|events chat/agent/presence| WebChat
 ```
 
+## 2.5 Phase 总览与索引
+
+> 本节提供所有 Phase 的简要索引，方便快速定位详细说明；编号保持原有顺序，仅在个别安全子阶段标注子编号（如 3S）。
+
+- **Phase 0**：文档与边界
+- **Phase 1 / 1.5 / 2 / 2.5 / 3（UI）**：工程骨架 → 最小闭环 → 极速启动 → 配置 & Doctor → 极致美学重构
+- **Phase 3S（安全子阶段）**：默认安全策略（pairing/allowlist）
+- **Phase 4 / 4.5**：Skills + Memory → Memory 升级与向量检索
+- **Phase 5**：SOUL / Persona 人格系统
+- **Phase 6 / 7**：飞书渠道、Heartbeat 定时任务
+- **Phase 8–10–11–12–13–13.5**：Moltbot 能力对标、浏览器扩展、系统执行、实时文件感知、向量加速、多媒体与视觉
+- **Phase 14**：方法论系统（自我进化）
+- **Phase 15**：渠道架构升级（Channel Architecture）
+- **Phase 16**：子 Agent 编排（规划中）
+- **Phase 17–18**：MCP 支持、日志系统
+- **Phase 19**：安全加固（Security Hardening）✅ 已完成
+- **Windows 兼容性增强**：对应 Roadmap Phase 15 的平台兼容任务，详见后文
+
 ## 3. 里程碑与阶段划分
 
 ### Phase 0：文档与边界（已完成）
@@ -155,7 +173,9 @@ sequenceDiagram
     - **Smart Input**: 支持自动变高的多行输入框 (Shift+Enter 换行)。
     - **Smooth Motion**: 消息气泡的平滑上浮动画 与 呼吸灯状态指示。
 
-### Phase 3：默认安全策略（pairing/allowlist）
+### Phase 3S：默认安全策略（pairing/allowlist）
+
+> 说明：本节视为 Phase 3 的安全子阶段（Safety Sub-phase），编号 **3S**，与 UI 向前端美学重构的 Phase 3 并行。
 
 **目标**：未知入站默认不触发 agent；必须通过 pairing 才放行。
 
@@ -495,7 +515,7 @@ moltbot 通过 Workspace 引导文件体系实现 Agent 人格化：
 
 | 编号 | 主题 | 对应对比章节 | 主要目标 | 备注 |
 |------|------|--------------|----------|------|
-| P1-1 | 安全加固（workspace / config / browser） | §10 安全、防护 | 落实安全路线图中的 P0/P1/P2 项：将 `workspace.read/list` 纳入 secureMethods 并屏蔽 `allowlist.json/mcp.json` 等敏感文件；调整默认 `AUTH_MODE`（避免 `none`）；对 `config.read/update` 做脱敏和字段白名单；为 `web_fetch` 和浏览器工具增加更严密的 SSRF/域名策略。 | 具体技术细节已在本文 **4.1 安全加固路线图** 中给出，实现时按该小节拆任务即可。 |
+| P1-1 | 安全加固（workspace / config / browser） | §10 安全、防护 | 落实安全路线图中的 P0/P1/P2 项：将 `workspace.read/list` 纳入 secureMethods 并屏蔽 `allowlist.json/mcp.json` 等敏感文件；调整默认 `AUTH_MODE`（避免 `none`）；对 `config.read/update` 做脱敏和字段白名单；为 `web_fetch` 和浏览器工具增加更严密的 SSRF/域名策略。 | ✅ **已完成 (Phase 19)** <br> workspace 权限、配置脱敏、SSRF 防护、浏览器域名控制均已落地。 |
 | P1-2 | CLI 命令树与 Onboarding Wizard | §1 核心平台 | 在现有 `pnpm dev:gateway` 和 pairing/skills 命令基础上，设计并实现统一的 `belldandy` CLI 入口（或 `belldandy gateway/agent/send/config/doctor` 子命令），并新增交互式 Onboarding Wizard（对标 `openclaw onboard`），覆盖 gateway、workspace、channels、skills 的引导配置。 | Wizard UI 可先走 CLI 文本模式，后续再考虑 Web 向导；需与现有 Settings/Doctor 面板配合。 |
 | P1-3 | 渠道扩展（一线 IM 最小支撑） | §3 Channels | 在 `belldandy-channels` 现有接口基础上，新增至少 1–2 个非飞书渠道（建议 Telegram + Slack 或 Discord），形成“多渠道收件箱”的最小闭环，对齐 OpenClaw 的多渠道能力。 | 优先选技术门槛低、官方 SDK 成熟的渠道；可先实现只收消息 + 回复的 MVP，后续再补群路由细节。 |
 | P1-4 | 定时任务 / Cron 工具（软硬结合） | §8 定时任务 | 在 Heartbeat Runner 之上，抽象出通用 Cron 工具与配置（例如 `cron.list` / `cron.set`），对接 Gateway 配置，让非心跳类任务也能按计划触发（对标 OpenClaw 的 cron jobs）。 | 初版可以仅支持本地定时任务，暂不接 webhook/Gmail PubSub；注意与 HEARTBEAT.md 的职责边界。 |
@@ -762,7 +782,10 @@ moltbot 通过 Workspace 引导文件体系实现 Agent 人格化：
     - 自动逻辑检查文本长度。如果超过 1500 字符，先调用 LLM 对文本进行总结，然后再发送给 TTS，以节省成本并缩短播放时间。
 - **双引擎 (Dual Engine)**: 支持在 OpenAI TTS 和 ElevenLabs 之间无缝切换。
  
-### Phase 15: Windows 兼容性增强 (Windows Compatibility) [已完成]
+### Windows 兼容性增强 (Windows Compatibility) [已完成]
+
+> 对应 Roadmap 中的 **Phase 15（Windows 支持）**，在此单独展开细节，避免与「渠道架构升级」的 Phase 15 混淆。
+
 - **Status**: 已完成 (2026-02-04)
 - **Goal**: 解决 Belldandy 在 Windows 原生环境下（cmd/powershell）的“水土不服”问题，提供与 Linux 同等流畅的运维体验。
 - **Problem**: 
