@@ -1,11 +1,15 @@
 export type EmbeddingVector = number[];
 
-export interface EmbeddingModel {
-    embedQuery(text: string): Promise<EmbeddingVector>;
+export interface EmbeddingProvider {
+    embed(text: string): Promise<EmbeddingVector>;
     embedBatch(texts: string[]): Promise<EmbeddingVector[]>;
-    readonly dimension: number;
-    readonly modelName: string;
+    // Optional metadata
+    readonly dimension?: number;
+    readonly modelName?: string;
 }
+
+// Deprecated alias for backward compatibility if needed, or just remove
+export type EmbeddingModel = EmbeddingProvider;
 
 export function cosineSimilarity(a: EmbeddingVector, b: EmbeddingVector): number {
     if (a.length !== b.length) return 0;

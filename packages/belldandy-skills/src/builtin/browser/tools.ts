@@ -354,6 +354,7 @@ export const browserTypeTool: Tool = {
     },
 };
 
+
 export const browserScreenshotTool: Tool = {
     definition: {
         name: "browser_screenshot",
@@ -372,11 +373,16 @@ export const browserScreenshotTool: Tool = {
             const manager = BrowserManager.getInstance();
             const page = await manager.getPage();
 
-            // Ensure workspace screenshots directory exists (optional, or just save to root)
-            // For now, save to workspace root or a dedicated 'screenshots' folder?
-            // Let's use request workspaceRoot if available, or cwd.
-            const targetDir = context.workspaceRoot || ".";
-            const filename = `${name}.png`;
+            // Store in 'screenshots' directory in workspace root
+            const workspaceRoot = context.workspaceRoot || process.cwd();
+            const targetDir = path.join(workspaceRoot, "screenshots");
+
+            // Ensure directory exists
+            await fs.mkdir(targetDir, { recursive: true });
+
+            // Ensure unique filename to avoid overwrites if name is reused
+            const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+            const filename = `${name}_${timestamp}.png`;
             const filepath = path.join(targetDir, filename);
 
             await page.screenshot({ path: filepath });
@@ -391,34 +397,61 @@ export const browserScreenshotTool: Tool = {
 export const browserGetContentTool: Tool = {
     definition: {
         name: "browser_get_content",
-        description: "Get the text content or HTML of the active page.",
+        description: "Get the content of the active page in Markdown (default), Text, or HTML format. Use 'markdown' for reading articles.",
         parameters: {
             type: "object",
             properties: {
-                format: { type: "string", description: "'text' or 'html'. Default is 'text'.", enum: ["text", "html"] },
+                format: {
+                    type: "string",
+                    description: "Format to return: 'markdown' (optimized for reading), 'text' (raw text), or 'html' (raw source). Default is 'markdown'.",
+                    enum: ["markdown", "text", "html"]
+                },
             },
         },
     },
     execute: async (args, context) => {
         const start = Date.now();
         try {
-            const format = (args.format as string) || "text";
+            const format = (args.format as string) || "markdown";
             const manager = BrowserManager.getInstance();
             const page = await manager.getPage();
 
             let content = "";
+            let metadata = "";
+
             if (format === "html") {
                 content = await page.content();
-            } else {
-                // Get generic text content (e.g. body.innerText)
+            } else if (format === "text") {
                 content = await page.evaluate(() => document.body.innerText);
+            } else {
+                // Markdown (Readability)
+                const html = await page.content();
+                const url = page.url();
+                // Ensure import works in ESM context
+                const { extractReadabilityContent, htmlToMarkdown } = await import("./utils.js");
+
+                try {
+                    const result = extractReadabilityContent(html, url);
+
+                    if (result) {
+                        const title = result.title ? `# ${result.title}\n\n` : "";
+                        const byline = result.byline ? `*By ${result.byline}*\n\n` : "";
+                        const originalUrl = `*Source: ${url}*\n\n`;
+                        content = `${title}${byline}${originalUrl}${result.content}`;
+                    } else {
+                        // Fallback if readability fails
+                        content = htmlToMarkdown(html);
+                    }
+                } catch (e) {
+                    console.warn("[browser_get_content] Readability failed, falling back to raw markdown conversion", e);
+                    content = htmlToMarkdown(html);
+                }
             }
 
-            // Truncate if too long? For now, return full content (tool policy might cap it later).
-            // Let's truncate to reasonable size for LLM consumption (e.g. 10k chars)
-            const MAX_LEN = 10000;
+            // Truncate to avoid context overflow (adjustable)
+            const MAX_LEN = 15000;
             const truncated = content.length > MAX_LEN
-                ? content.slice(0, MAX_LEN) + `\n...[truncated ${content.length - MAX_LEN} chars]...`
+                ? content.slice(0, MAX_LEN) + `\n\n...[content truncated, original length: ${content.length} chars]...`
                 : content;
 
             return success("unknown", "browser_get_content", truncated, start);

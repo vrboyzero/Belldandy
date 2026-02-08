@@ -366,6 +366,9 @@ moltbot 使用双层记忆结构：
 | `BELLDANDY_MEMORY_ENABLED` | 启用记忆检索（默认 false） |
 | `BELLDANDY_MEMORY_DIR` | 记忆目录（默认 .belldandy/memory） |
 | `BELLDANDY_MEMORY_DB` | SQLite 路径（默认 ~/.belldandy/memory.db） |
+| `BELLDANDY_EMBEDDING_MODEL` | 嵌入模型名称（如 text-embedding-v1） |
+| `BELLDANDY_EMBEDDING_OPENAI_API_KEY` | 嵌入专用 API Key（可选，默认使用通用 Key） |
+| `BELLDANDY_EMBEDDING_OPENAI_BASE_URL` | 嵌入专用 Base URL（可选，默认使用通用 URL） |
 
 #### 4.7 验收用例
 
@@ -383,6 +386,31 @@ moltbot 使用双层记忆结构：
     - **Configurable Embedding**: 支持通过 `BELLDANDY_EMBEDDING_MODEL` 自定义模型（如 `text-embedding-v1`）。
     - **Session Indexing**: `MemoryIndexer` 自动监听 `sessions` 目录，增量生成向量索引。
     - **Vector Bootstrap**: 解决首次启动向量表初始化问题，增强工程健壮性。
+    - **Global MemoryManager**: 统一 Gateway 与 Skills 的 MemoryManager 实例，让 `memory_search` 工具能访问会话向量索引。
+
+### Phase 4.7：记忆检索增强 (Memory Retrieval Enhancement) [Proposed]
+- **Goal**: 让 Agent 更主动、更智能地使用长期记忆，从"被动回忆"升级为"主动关联"。
+- **Core Features**:
+    - **方案 A - Prompt 引导（已完成）**:
+        - 在 `AGENTS.md` 中添加记忆检索策略规则，引导 Agent 在遇到回忆类问题时主动使用 `memory_search`。
+        - 状态：✅ 已完成（2026-02-08）
+    - **方案 B - Context Injection（规划中）**:
+        - 每次对话开始时，自动从 sessions 中提取最近对话摘要，注入 System Prompt。
+        - 实现位置：`packages/belldandy-agent/src/agent.ts`
+        - 预期效果：Agent 无需工具调用即可感知近期话题，提升连续性。
+    - **方案 C - Auto-Recall（规划中）**:
+        - 使用 NLP 检测用户输入中的"回忆类"关键词（如"之前"、"上次"、"还记得"）。
+        - 自动触发 `memory_search` 并将结果注入上下文。
+        - 实现位置：`packages/belldandy-agent/src/agent.ts` 消息处理流程。
+        - 预期效果：Agent 无需主动决策，系统自动为其"回忆"相关上下文。
+
+### Phase 4.8：记忆系统深度优化 (Advanced Memory Optimization) [Planned]
+- **Goal**: 提升长时记忆的检索质量与效率，接近人类的联想记忆能力，解决碎片化与指代不清问题。
+- **Core Features**:
+    - [ ] **Auto-Summarization**: 每日/定期生成 High-Level Summary，解决记忆碎片化问题。
+    - [ ] **Metadata Filtering**: 写入时注入 `channel`/`topic`/`timestamp`，检索时支持 `WHERE` 精确过滤。
+    - [ ] **Query Rewrite**: 利用 LLM 改写用户查询（消除指代歧义），提升检索上下文相关性。
+    - [ ] **Rerank Model**: 引入 Reranker 对向量结果二次打分，提升 Top-N 准确率。
 
 
 
@@ -665,10 +693,13 @@ moltbot 通过 Workspace 引导文件体系实现 Agent 人格化：
   - 实现了 `browserContextId` 注入，欺骗 Puppeteer 认为这是一个合法的 Browser Context。
 - **高级能力（Phase 9.4）**：
   - **Robust Navigation**: 封装 `browser_open` / `browser_navigate`，支持超时与重试。
-  - **Visual Feedback**: 实现 `browser_screenshot`，支持保存到工作区。
-  - **Content Extraction**: 实现 `browser_get_content` (Text/HTML) 用于 LLM 阅读。
-  - **Tool Calls**: 集成 `browser_snapshot` / `browser_click` / `browser_type`，支持基于 Magic ID 的精细控制。
-  - **Agent Integration**: 已将所有工具注册到 Gateway，配合 `README.md` 文档即可开箱即用。
+### Phase 9.5: Browser Vision & Reading (✅ 已完成)
+- **目标**：赋予 Agent "看"网页（截图）和"读"网页（提取正文）的能力。
+- **状态**：**已完成**（2026-02-08）
+- **实现内容**：
+    - **Visual Feedback**: 实现 `browser_screenshot` 并自动归档到 `screenshots/`。
+    - **Enhanced Reading**: 实现 `browser_get_content` 并支持 Markdown/Readability 优化算法。
+    - **Tool Calls**: 全面集成 `browser_snapshot` / `browser_click` / `browser_type`。
 
 ### Phase 10: 系统级操作 (System Execution)（已完成）
 
@@ -694,6 +725,19 @@ moltbot 通过 Workspace 引导文件体系实现 Agent 人格化：
   - `add`/`change` -> 自动调用 `indexFile` 重新生成 Embedding (及 Keyword 索引)。
   - `unlink` -> 自动调用 `deleteBySource` 清理失效记忆。
 - **验证**：通过 `verify-watcher.mjs` 验证了文件增删改的毫秒级感知。
+
+### Phase 10.5: OS 计算机操作能力 (OS Computer Use) [Proposed]
+- **Goal**: 赋予 Agent 像人一样操作操作系统的能力（看屏幕、动鼠标、敲键盘），突破浏览器限制。
+- **Reference**: `UI-TARS` "看得准 + 点得准" 最佳实践。
+- **Core Components**:
+    - **High-Fidelity Vision**:
+        - 使用 `nut-js` + `Jimp` 获取物理分辨率截图。
+        - 处理 DPI Scale Factor，确保坐标系对齐。
+    - **Precision Control**:
+        - **Box-to-Pixel**: 实现统一坐标映射层（VLM [0-1000] -> Screen [x,y]）。
+        - **Human-like Input**: 鼠标平滑移动 (`straightTo`)，键盘使用剪贴板粘贴 (`Ctrl+V`) 避免 IME 问题。
+    - **Visual Feedback**:
+        - **ScreenMarker**: 透明置顶窗口，实时绘制 AI 的“注视点”和“拟操作框”，提供可解释性。
 
 ### Phase 12: 性能与向量加速 (Phase 12: Vector Optimization)（已完成）
 
@@ -1006,7 +1050,6 @@ packages/belldandy-skills/src/builtin/
 | `BELLDANDY_LOG_MAX_SIZE` | 单文件最大大小 | `10MB` |
 | `BELLDANDY_LOG_RETENTION_DAYS` | 日志保留天数 | `7` |
 | `BELLDANDY_LOG_CONSOLE` | 启用控制台输出 | `true` |
-| `BELLDANDY_LOG_FILE` | 启用文件输出 | `true` |
 
 **轮转与清理策略**：
 

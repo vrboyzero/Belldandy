@@ -13,6 +13,9 @@ export class OpenAIEmbeddingProvider {
         this.dimension = options.dimension || 1536;
         console.log(`[Embedding] Initialized OpenAI provider with model: ${this.modelName}`);
     }
+    async embed(text) {
+        return this.embedQuery(text);
+    }
     async embedQuery(text) {
         const response = await this.openai.embeddings.create({
             model: this.modelName,

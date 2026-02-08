@@ -1,7 +1,7 @@
-import type { EmbeddingModel, EmbeddingVector } from "./index.js";
+import type { EmbeddingProvider, EmbeddingVector } from "./index.js";
 import OpenAI from "openai";
 
-export class OpenAIEmbeddingProvider implements EmbeddingModel {
+export class OpenAIEmbeddingProvider implements EmbeddingProvider {
     private openai: OpenAI;
     readonly modelName: string;
     readonly dimension: number;
@@ -16,6 +16,10 @@ export class OpenAIEmbeddingProvider implements EmbeddingModel {
         this.dimension = options.dimension || 1536;
 
         console.log(`[Embedding] Initialized OpenAI provider with model: ${this.modelName}`);
+    }
+
+    async embed(text: string): Promise<EmbeddingVector> {
+        return this.embedQuery(text);
     }
 
     async embedQuery(text: string): Promise<EmbeddingVector> {

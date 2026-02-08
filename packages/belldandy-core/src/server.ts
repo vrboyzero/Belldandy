@@ -19,7 +19,7 @@ import type {
 } from "@belldandy/protocol";
 import { ensurePairingCode, isClientAllowed, resolveStateDir } from "./security/store.js";
 import type { BelldandyLogger } from "./logger/index.js";
-import { MemoryManager } from "@belldandy/memory";
+import { MemoryManager, registerGlobalMemoryManager } from "@belldandy/memory";
 
 export type GatewayServerOptions = {
   port: number;
@@ -129,10 +129,15 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
   const memoryManager = new MemoryManager({
     workspaceRoot: sessionsDir, // 仅索引会话目录
     storePath: path.join(stateDir, "memory.sqlite"),
+    // [FIX] Ensure models are stored in the state root, not nested in sessions
+    modelsDir: path.join(stateDir, "models"),
     // [FIX] Use BELLDANDY_ prefixed env vars first, fallback to standard env
-    openaiApiKey: process.env.BELLDANDY_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY,
-    openaiBaseUrl: process.env.BELLDANDY_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL,
+    // [UPDATE] Support separate config for Embedding Provider
+    openaiApiKey: process.env.BELLDANDY_EMBEDDING_OPENAI_API_KEY ?? process.env.BELLDANDY_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY,
+    openaiBaseUrl: process.env.BELLDANDY_EMBEDDING_OPENAI_BASE_URL ?? process.env.BELLDANDY_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL,
     openaiModel: process.env.BELLDANDY_EMBEDDING_MODEL, // [NEW] Pass configured model
+    provider: (process.env.BELLDANDY_EMBEDDING_PROVIDER as "openai" | "local") || "openai",
+    localModel: process.env.BELLDANDY_LOCAL_EMBEDDING_MODEL,
     indexerOptions: {
       // 重要：必须允许扫描 .belldandy 目录下的内容，否则默认 ignorePatterns 会跳过
       ignorePatterns: ["node_modules", ".git"],
@@ -140,6 +145,10 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
       watch: true
     }
   });
+
+  // [NEW] Register as global instance so memory_search tool can access this instance
+  // This enables Agent to search session history via vector retrieval
+  registerGlobalMemoryManager(memoryManager);
 
   // 启动异步索引 (不阻塞 Gateway 启动)
   memoryManager.indexWorkspace().catch(err => {

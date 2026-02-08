@@ -34,3 +34,6 @@ export type MemoryIndexStatus = {
   vectorIndexed?: number;
   vectorCached?: number;
 };
+
+export class AuthenticationError extends Error { }
+export class RateLimitError extends Error { }

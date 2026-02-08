@@ -164,6 +164,11 @@
     - **Relay Server**：一个 WebSocket 中继服务，模拟 CDP (Chrome DevTools Protocol)，让 Puppeteer 可以连接到真实的浏览器扩展。
     - **Chrome Extension**：基于 Manifest V3 (MV3) 开发，利用 `chrome.debugger` API 接管 Tab。
     - **Agent Integration**：封装了标准的 Browser Tools (`browser_open`, `browser_screenshot`, `browser_get_content`, `browser_snapshot`)。
+- **Phase 9.5 能力增强**：
+    - **增强阅读 (Enhanced Reading)**：
+        - `browser_get_content` 集成了 **Readability** 算法与 Markdown 转换，能够提取网页正文去除噪声，大幅提升阅读体验并降低 Token 消耗。
+    - **视觉反馈 (Visual Feedback)**：
+        - `browser_screenshot` 实现了完整的截图与自动归档流程（保存至 `screenshots/`），赋予 Agent "看见" 网页实际渲染效果的能力。
 - **技术突破**：
     - 解决了 Puppeteer 与 Extension 之间的 Target ID 映射差异。
     - 实现了自动化中继启动（随 Gateway 拉起）。
@@ -263,7 +268,53 @@
     - **全渠道记忆**：无论是网页还是飞书，对话记录都统一归档并在未来可检索。
     - **长程记忆**：Agent 可以通过 `memory_search` 回忆起几天甚至几个月前的对话细节。
 
+### 15. 记忆检索增强 (Memory Retrieval Enhancement) Phase 4.7
+
+- **目标**：让 Agent 更主动、更智能地使用长期记忆，从"被动回忆"升级为"主动关联"。
+- **状态**：部分完成 (2026-02-08)
+- **已完成**：
+    - **Global MemoryManager**：统一 Gateway 与 Skills 的 MemoryManager 实例，让 `memory_search` 工具能访问会话向量索引。
+    - **Prompt 引导**：在 `AGENTS.md` 中添加记忆检索策略规则，引导 Agent 在遇到回忆类问题时主动使用 `memory_search`。
+- **规划中**：
+    - **Context Injection**：每次对话开始时，自动从 sessions 中提取最近对话摘要，注入 System Prompt。
+    - **Auto-Recall**：使用 NLP 检测用户输入中的"回忆类"关键词，自动触发 `memory_search` 并将结果注入上下文。
+- **价值**：让 Agent 像人类一样自然地回忆，而非机械地等待用户显式请求。
+
 ---
+
+## 16. 记忆系统未来优化规划 (Planned)
+
+虽然当前系统已具备基础的向量检索能力，但为了进一步提升记忆的“智能感”，我们规划了以下三个优化方向（待适时落地）：
+
+1.  **自动摘要 (Auto-Summarization)**
+    - **痛点**：长期对话会导致记忆碎片化，缺乏宏观结论。
+    - **方案**：每日或定期触发 LLM 对近期对话生成 **High-Level Summary**，并作为独立记忆块存入，便于检索“结论”而非“过程”。
+
+2.  **元数据过滤 (Metadata Filtering)**
+    - **痛点**：全量检索可能混杂不同渠道、不同话题的无关信息。
+    - **方案**：在记忆块中注入 `channel`、`topic`、`timestamp` 等结构化标签，检索时支持 SQL 级预过滤（Pre-filtering），如“只查飞书上的技术讨论”。
+
+3.  **查询重写与重排序 (Rewrite & Rerank)**
+    - **痛点**：用户指代不清（“它怎么样？”）导致检索失败；向量相似度不等于逻辑相关度。
+    - **方案**：
+        - **Rewrite**：先用 LLM 将用户查询改写为完整句子（消歧），再检索。
+        - **Rerank**：引入精细的 Rerank 模型对初步检索的 Top-50 结果进行二次打分，筛选出真正相关的 Top-5。
+
+---
+
+## 16. OS 计算机操作能力规划 (Computer Use Strategy) [Planned]
+
+基于 `UI-TARS` 的最佳实践（“看得准”与“点得准”），我们计划赋予 Belldandy 操作系统级别的 GUI 控制能力，使其不局限于浏览器和终端。
+
+1.  **视觉层：精准屏幕感知 (High-Fidelity Vision)**
+    - **DPI 适配**: 引入 `nut-js` + `Jimp` 方案，正确处理 Retina/高分屏缩放 (Scale Factor)，保证模型看到的与真实物理像素一致。
+    - **Visual Feedback**: 实现 `ScreenMarker` (透明置顶窗口)，在执行点击前通过高亮框/光标实时展示模型意图，让用户“看得见”Agent 想点哪。
+
+2.  **控制层：拟人化键鼠操作 (Human-like Input)**
+    - **坐标映射**: 实现统一的 `Box-to-Pixel` 转换器，将 VLM 返回的归一化坐标精准映射到物理屏幕。
+    - **输入优化**:
+        - **Keyboard**: Windows 下优先使用 **剪贴板粘贴 (Ctrl+V)** 替代逐字输入，彻底解决 IME 输入法干扰和字符丢失问题。
+        - **Mouse**: 使用线性插值 (`straightTo`) 移动路径，避免瞬移被反外挂检测，同时增加操作的自然感。
 
 ### 6. Phase 2.5: 可视化配置 & System Doctor (用户体验升级)
 

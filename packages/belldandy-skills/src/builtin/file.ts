@@ -358,6 +358,9 @@ export const fileWriteTool: Tool = {
       const normalizedRelative = relative.replace(/\\/g, "/").toLowerCase();
       const allowed = allowedPaths.some(p => {
         const normalizedAllowed = p.replace(/\\/g, "/").toLowerCase();
+        // [FIX] Special case: "." means everything under root is allowed
+        if (normalizedAllowed === ".") return true;
+
         return normalizedRelative.startsWith(normalizedAllowed + "/") ||
           normalizedRelative === normalizedAllowed;
       });

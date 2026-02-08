@@ -14,8 +14,9 @@
   "dependencies": {
     "@belldandy/protocol": "workspace:*",
     "chokidar": "^5.0.0",
-    "openai": "^6.17.0",
-    "sqlite-vec": "0.1.7-alpha.2"
+    "openai": "^4.24.0",
+    "sqlite-vec": "0.1.7-alpha.2",
+    "fastembed": "^1.14.1"
   },
   "devDependencies": {
     "@types/chokidar": "^2.1.7",

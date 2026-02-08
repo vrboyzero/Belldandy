@@ -31,4 +31,8 @@ export type MemoryIndexStatus = {
     vectorIndexed?: number;
     vectorCached?: number;
 };
+export declare class AuthenticationError extends Error {
+}
+export declare class RateLimitError extends Error {
+}
 //# sourceMappingURL=types.d.ts.map

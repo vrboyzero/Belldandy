@@ -1,5 +1,5 @@
-import type { EmbeddingModel, EmbeddingVector } from "./index.js";
-export declare class OpenAIEmbeddingProvider implements EmbeddingModel {
+import type { EmbeddingProvider, EmbeddingVector } from "./index.js";
+export declare class OpenAIEmbeddingProvider implements EmbeddingProvider {
     private openai;
     readonly modelName: string;
     readonly dimension: number;
@@ -9,6 +9,7 @@ export declare class OpenAIEmbeddingProvider implements EmbeddingModel {
         model?: string;
         dimension?: number;
     });
+    embed(text: string): Promise<EmbeddingVector>;
     embedQuery(text: string): Promise<EmbeddingVector>;
     embedBatch(texts: string[]): Promise<EmbeddingVector[]>;
 }

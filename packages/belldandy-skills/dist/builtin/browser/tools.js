@@ -1,5 +1,6 @@
 import puppeteer from "puppeteer-core";
 import path from "node:path";
+import fs from "node:fs/promises";
 import WebSocket from "ws";
 // Relay Server runs on port 28892 by default
 const RELAY_WS_ENDPOINT = "ws://127.0.0.1:28892/cdp";
@@ -320,11 +321,14 @@ export const browserScreenshotTool = {
             const name = args.name || `screenshot-${Date.now()}`;
             const manager = BrowserManager.getInstance();
             const page = await manager.getPage();
-            // Ensure workspace screenshots directory exists (optional, or just save to root)
-            // For now, save to workspace root or a dedicated 'screenshots' folder?
-            // Let's use request workspaceRoot if available, or cwd.
-            const targetDir = context.workspaceRoot || ".";
-            const filename = `${name}.png`;
+            // Store in 'screenshots' directory in workspace root
+            const workspaceRoot = context.workspaceRoot || process.cwd();
+            const targetDir = path.join(workspaceRoot, "screenshots");
+            // Ensure directory exists
+            await fs.mkdir(targetDir, { recursive: true });
+            // Ensure unique filename to avoid overwrites if name is reused
+            const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+            const filename = `${name}_${timestamp}.png`;
             const filepath = path.join(targetDir, filename);
             await page.screenshot({ path: filepath });
             return success("unknown", "browser_screenshot", `Screenshot saved to ${filepath}`, start);
@@ -337,33 +341,60 @@ export const browserScreenshotTool = {
 export const browserGetContentTool = {
     definition: {
         name: "browser_get_content",
-        description: "Get the text content or HTML of the active page.",
+        description: "Get the content of the active page in Markdown (default), Text, or HTML format. Use 'markdown' for reading articles.",
         parameters: {
             type: "object",
             properties: {
-                format: { type: "string", description: "'text' or 'html'. Default is 'text'.", enum: ["text", "html"] },
+                format: {
+                    type: "string",
+                    description: "Format to return: 'markdown' (optimized for reading), 'text' (raw text), or 'html' (raw source). Default is 'markdown'.",
+                    enum: ["markdown", "text", "html"]
+                },
             },
         },
     },
     execute: async (args, context) => {
         const start = Date.now();
         try {
-            const format = args.format || "text";
+            const format = args.format || "markdown";
             const manager = BrowserManager.getInstance();
             const page = await manager.getPage();
             let content = "";
+            let metadata = "";
             if (format === "html") {
                 content = await page.content();
             }
-            else {
-                // Get generic text content (e.g. body.innerText)
+            else if (format === "text") {
                 content = await page.evaluate(() => document.body.innerText);
             }
-            // Truncate if too long? For now, return full content (tool policy might cap it later).
-            // Let's truncate to reasonable size for LLM consumption (e.g. 10k chars)
-            const MAX_LEN = 10000;
+            else {
+                // Markdown (Readability)
+                const html = await page.content();
+                const url = page.url();
+                // Ensure import works in ESM context
+                const { extractReadabilityContent, htmlToMarkdown } = await import("./utils.js");
+                try {
+                    const result = extractReadabilityContent(html, url);
+                    if (result) {
+                        const title = result.title ? `# ${result.title}\n\n` : "";
+                        const byline = result.byline ? `*By ${result.byline}*\n\n` : "";
+                        const originalUrl = `*Source: ${url}*\n\n`;
+                        content = `${title}${byline}${originalUrl}${result.content}`;
+                    }
+                    else {
+                        // Fallback if readability fails
+                        content = htmlToMarkdown(html);
+                    }
+                }
+                catch (e) {
+                    console.warn("[browser_get_content] Readability failed, falling back to raw markdown conversion", e);
+                    content = htmlToMarkdown(html);
+                }
+            }
+            // Truncate to avoid context overflow (adjustable)
+            const MAX_LEN = 15000;
             const truncated = content.length > MAX_LEN
-                ? content.slice(0, MAX_LEN) + `\n...[truncated ${content.length - MAX_LEN} chars]...`
+                ? content.slice(0, MAX_LEN) + `\n\n...[content truncated, original length: ${content.length} chars]...`
                 : content;
             return success("unknown", "browser_get_content", truncated, start);
         }

@@ -1,12 +1,24 @@
-import { MemoryManager } from "@belldandy/memory";
-// Singleton instance (lazy init)
+import { MemoryManager, getGlobalMemoryManager } from "@belldandy/memory";
+import path from "node:path";
+// Singleton instance (lazy init, fallback only)
 let memoryManager = null;
 function getMemoryManager(workspaceRoot) {
+    // [FIX] 优先使用 Gateway 注册的全局实例，以便访问 sessions 向量索引
+    const global = getGlobalMemoryManager();
+    if (global) {
+        return global;
+    }
+    // Fallback: 创建本地实例（用于测试或独立运行场景）
     if (!memoryManager) {
+        // [IMPROVED] Use shared models directory if available
+        const stateDir = process.env.BELLDANDY_STATE_DIR;
+        const modelsDir = stateDir ? path.join(stateDir, "models") : undefined;
         memoryManager = new MemoryManager({
             workspaceRoot,
+            modelsDir, // Use shared directory to avoid re-downloading per workspace
             // API key is pulled from env by MemoryManager default behavior
         });
+        console.log("[memory_search] Created fallback MemoryManager (no global instance found)");
     }
     return memoryManager;
 }
