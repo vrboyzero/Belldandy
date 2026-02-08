@@ -5,6 +5,7 @@ export interface MemoryManagerOptions {
     storePath?: string;
     openaiApiKey?: string;
     openaiBaseUrl?: string;
+    openaiModel?: string;
     indexerOptions?: IndexerOptions;
 }
 export declare class MemoryManager {
@@ -22,8 +23,7 @@ export declare class MemoryManager {
      */
     search(query: string, limit?: number): Promise<MemorySearchResult[]>;
     /**
-     * Process chunks that lack embeddings (simple implementation for MVP)
-     * Real implementation would utilize a queue or 'dirty' flag.
+     * Process chunks that lack embeddings
      */
     private processPendingEmbeddings;
     getStatus(): MemoryIndexStatus;

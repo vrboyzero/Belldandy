@@ -9,6 +9,7 @@ import {
   ensureWorkspace,
   loadWorkspaceFiles,
   buildSystemPrompt,
+  ConversationStore,
 } from "@belldandy/agent";
 import {
   ToolExecutor,
@@ -477,6 +478,15 @@ Use the 'edge' provider by default for free, high-quality speech.`;
   }
   : undefined;
 
+// 7.5 Init Conversation Store (Shared)
+const sessionsDir = path.join(stateDir, "sessions");
+fs.mkdirSync(sessionsDir, { recursive: true });
+
+const conversationStore = new ConversationStore({
+  dataDir: sessionsDir,
+  maxHistory: 50, // Default history length
+});
+
 const server = await startGatewayServer({
   port,
   host,
@@ -484,6 +494,7 @@ const server = await startGatewayServer({
   webRoot,
   stateDir,
   agentFactory: createAgent,
+  conversationStore: conversationStore, // Pass shared instance
   onActivity,
   logger,
 });
@@ -540,6 +551,7 @@ if (feishuAppId && feishuAppSecret && createAgent) {
       appId: feishuAppId,
       appSecret: feishuAppSecret,
       agent: agent,
+      conversationStore: conversationStore, // [PERSISTENCE] Inject store
       initialChatId: (() => {
         try {
           const statePath = path.join(stateDir, "feishu-state.json");

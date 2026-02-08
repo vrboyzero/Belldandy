@@ -47,7 +47,7 @@ flowchart TB
 - **Phase 0**：文档与边界
 - **Phase 1 / 1.5 / 2 / 2.5 / 3（UI）**：工程骨架 → 最小闭环 → 极速启动 → 配置 & Doctor → 极致美学重构
 - **Phase 3S（安全子阶段）**：默认安全策略（pairing/allowlist）
-- **Phase 4 / 4.5**：Skills + Memory → Memory 升级与向量检索
+- **Phase 4 / 4.5 / 4.6**：Skills + Memory → Vector Memory → Session Persistence
 - **Phase 5**：SOUL / Persona 人格系统
 - **Phase 6 / 7**：飞书渠道、Heartbeat 定时任务
 - **Phase 8–10–11–12–13–13.5**：Moltbot 能力对标、浏览器扩展、系统执行、实时文件感知、向量加速、多媒体与视觉
@@ -374,12 +374,25 @@ moltbot 使用双层记忆结构：
 - 端到端：WebChat 发送"读取 README.md"触发 file_read 工具
 - 端到端：用户提问时自动检索相关记忆并引用
 
+### Phase 4.6：会话持久化与向量记忆 (Persistence & Vector Memory)
+- **Status**: ✅ 已完成 (2026-02-08)
+- **Goal**: 实现会话数据的持久化存储，并利用向量索引实现“无限”的记忆 recall。
+- **Core Strategy**:
+    - **Session Persistence**: `ConversationStore` 升级为文件支持 (`.jsonl`)，重启不丢失。
+    - **Feishu Integrated**: 实现了飞书消息的双向持久化（User + Assistant），确保跨渠道记忆一致性。
+    - **Configurable Embedding**: 支持通过 `BELLDANDY_EMBEDDING_MODEL` 自定义模型（如 `text-embedding-v1`）。
+    - **Session Indexing**: `MemoryIndexer` 自动监听 `sessions` 目录，增量生成向量索引。
+    - **Vector Bootstrap**: 解决首次启动向量表初始化问题，增强工程健壮性。
+
+
+
 ## 3.1 下一步执行顺序（建议）
 
 1. ~~Phase 4：补 skills（受控文件/网络工具）与 memory（keyword 检索）~~ ✅ 已完成
 2. ~~Phase 5：SOUL/Persona 人格系统~~ ✅ 已完成
-3. ~~Phase 4.5：Memory 升级（向量检索 + moltbot 对齐）~~ ✅ 核心已完成（Step 1-6）
-4. ~~Phase 2.2：对话上下文分层~~ ✅ 已完成
+3. ~~Phase 4.5：Memory 升级（向量检索 + moltbot 对齐）~~ ✅ 已完成
+4. ~~Phase 4.6：会话持久化与向量记忆~~ ✅ 已完成
+5. ~~Phase 2.2：对话上下文分层~~ ✅ 已完成
 5. ~~Phase 3.1：完善 pairing 管理入口~~ ✅ 已完成（list/pending/cleanup/export/import 已落地）
 6. ~~**Phase 6**：飞书 (Feishu) 渠道（无需内网穿透）~~ ✅ 已完成
 7. ~~**Phase 7**：Heartbeat 定时任务~~ ✅ 已完成（心跳 Runner + Gateway 集成）

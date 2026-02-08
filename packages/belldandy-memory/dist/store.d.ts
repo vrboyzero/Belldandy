@@ -26,6 +26,14 @@ export declare class MemoryStore {
     updateLastIndexedAt(): void;
     /** 关闭数据库连接 */
     close(): void;
+    /**
+     * 初始化/准备向量表
+     */
+    prepareVectorStore(dimensions: number): void;
+    /**
+     * 获取未向量化的 chunks
+     */
+    getUnembeddedChunks(limit?: number): MemoryChunk[];
     private ensureVectorTable;
     /**
      * 存储 chunk 的 embedding 向量

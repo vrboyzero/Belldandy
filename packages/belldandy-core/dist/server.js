@@ -6,6 +6,7 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import { MockAgent, ConversationStore } from "@belldandy/agent";
 import { ensurePairingCode, isClientAllowed, resolveStateDir } from "./security/store.js";
+import { MemoryManager } from "@belldandy/memory";
 const DEFAULT_METHODS = [
     "message.send",
     "config.read",
@@ -67,7 +68,33 @@ export async function startGatewayServer(opts) {
         },
     });
     // 初始化会话存储
-    const conversationStore = new ConversationStore(opts.conversationStoreOptions);
+    const stateDir = opts.stateDir ?? resolveStateDir();
+    const sessionsDir = path.join(stateDir, "sessions");
+    // Ensure sessions dir exists
+    fs.mkdirSync(sessionsDir, { recursive: true });
+    const conversationStore = opts.conversationStore ?? new ConversationStore({
+        ...opts.conversationStoreOptions,
+        dataDir: sessionsDir,
+    });
+    // 初始化记忆向量索引 (Vector Memory)
+    const memoryManager = new MemoryManager({
+        workspaceRoot: sessionsDir, // 仅索引会话目录
+        storePath: path.join(stateDir, "memory.sqlite"),
+        // [FIX] Use BELLDANDY_ prefixed env vars first, fallback to standard env
+        openaiApiKey: process.env.BELLDANDY_OPENAI_API_KEY ?? process.env.OPENAI_API_KEY,
+        openaiBaseUrl: process.env.BELLDANDY_OPENAI_BASE_URL ?? process.env.OPENAI_BASE_URL,
+        openaiModel: process.env.BELLDANDY_EMBEDDING_MODEL, // [NEW] Pass configured model
+        indexerOptions: {
+            // 重要：必须允许扫描 .belldandy 目录下的内容，否则默认 ignorePatterns 会跳过
+            ignorePatterns: ["node_modules", ".git"],
+            extensions: [".jsonl"],
+            watch: true
+        }
+    });
+    // 启动异步索引 (不阻塞 Gateway 启动)
+    memoryManager.indexWorkspace().catch(err => {
+        console.error("Failed to start memory indexing:", err);
+    });
     wss.on("connection", (ws, req) => {
         const ip = req.socket.remoteAddress;
         log.info("ws", `New connection from ${ip}`);

@@ -1,5 +1,5 @@
 /** 记忆块 */
-export type MemoryType = "core" | "daily" | "other";
+export type MemoryType = "core" | "daily" | "session" | "other";
 
 export interface MemoryChunk {
   id: string;

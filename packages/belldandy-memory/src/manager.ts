@@ -13,6 +13,7 @@ export interface MemoryManagerOptions {
     storePath?: string;
     openaiApiKey?: string;
     openaiBaseUrl?: string;
+    openaiModel?: string; // [NEW] Allow configuring embedding model
     indexerOptions?: IndexerOptions;
 }
 
@@ -41,7 +42,8 @@ export class MemoryManager {
 
         this.embeddingModel = new OpenAIEmbeddingProvider({
             apiKey: options.openaiApiKey,
-            baseURL: options.openaiBaseUrl
+            baseURL: options.openaiBaseUrl,
+            model: options.openaiModel // [NEW] Pass model name
         });
 
         this.indexer = new MemoryIndexer(this.store, options.indexerOptions);
@@ -55,9 +57,6 @@ export class MemoryManager {
         await this.processPendingEmbeddings();
 
         // Start watching for changes
-        // TODO: make this configurable? For MVP we enable it by default if it's safe.
-        // Or better, only if options say so. But options.indexerOptions.watch defaults to false in Indexer.
-        // Let's rely on the passed options.
         await this.indexer.startWatching(this.workspaceRoot);
     }
 
@@ -78,18 +77,51 @@ export class MemoryManager {
     }
 
     /**
-     * Process chunks that lack embeddings (simple implementation for MVP)
-     * Real implementation would utilize a queue or 'dirty' flag.
+     * Process chunks that lack embeddings
      */
     private async processPendingEmbeddings(): Promise<void> {
-        // This is a placeholder. 
-        // To make this work, store.ts needs a way to query chunks without embeddings.
-        // Let's implement a simple "scan and embed" for MVP.
-        // NOTE: For efficiency, we should query `chunks` where id NOT IN `chunks_vec`.
+        // Fetch pending chunks
+        // First, check if we have dimensions known. If not, we might need to embed one to find out.
+        let dims = 1536; // Default fallback for OpenAI text-embedding-3-small
+        try {
+            // Probe the model to get actual dimensions
+            const probe = await this.embeddingModel.embedQuery("ping");
+            if (probe && probe.length > 0) {
+                dims = probe.length;
+            }
+        } catch (e) {
+            console.warn("Failed to probe embedding model, skipping vector generation", e);
+            return;
+        }
 
-        // Since we don't have that method exposed in Store yet, we'll skip this for the *very* first pass 
-        // OR we add a method to Store.
-        // Let's assume we will add `getChunksWithoutEmbeddings` to Store.
+        // Initialize vector table (this ensures vecDims is set in store)
+        this.store.prepareVectorStore(dims);
+
+        // Loop until no more pending chunks
+        while (true) {
+            const pending = this.store.getUnembeddedChunks(10); // Batch size 10
+            if (pending.length === 0) break;
+
+            console.log(`[MemoryManager] Processing ${pending.length} chunks for embedding...`);
+
+            // Simplify content for embedding (remove excessive newlines)
+            const texts = pending.map(c => c.content.replace(/\n+/g, " ").slice(0, 8000));
+
+            try {
+                const vectors = await this.embeddingModel.embedBatch(texts);
+
+                for (let i = 0; i < pending.length; i++) {
+                    const chunk = pending[i];
+                    const vec = vectors[i];
+                    if (vec) {
+                        this.store.upsertChunkVector(chunk.id, vec, "openai");
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to batch embed:", err);
+                break;
+            }
+        }
     }
 
     getStatus(): MemoryIndexStatus {

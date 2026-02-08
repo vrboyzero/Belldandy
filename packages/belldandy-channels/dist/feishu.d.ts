@@ -1,9 +1,11 @@
 import type { BelldandyAgent } from "@belldandy/agent";
 import type { Channel } from "./types.js";
+import { ConversationStore } from "@belldandy/agent";
 export interface FeishuChannelConfig {
     appId: string;
     appSecret: string;
     agent: BelldandyAgent;
+    conversationStore: ConversationStore;
     initialChatId?: string;
     onChatIdUpdate?: (chatId: string) => void;
 }
@@ -17,6 +19,7 @@ export declare class FeishuChannel implements Channel {
     private readonly client;
     private readonly wsClient;
     private readonly agent;
+    private readonly conversationStore;
     private _running;
     private lastChatId?;
     private onChatIdUpdate?;

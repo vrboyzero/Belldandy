@@ -11,6 +11,7 @@ export class OpenAIEmbeddingProvider {
         this.modelName = options.model || "text-embedding-3-small";
         // text-embedding-3-small default is 1536, but can be scaled down. 3-large is 3072.
         this.dimension = options.dimension || 1536;
+        console.log(`[Embedding] Initialized OpenAI provider with model: ${this.modelName}`);
     }
     async embedQuery(text) {
         const response = await this.openai.embeddings.create({

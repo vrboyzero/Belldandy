@@ -240,6 +240,29 @@
     - **Runtime Support**：自动管理 `~/.belldandy/methods` 目录。
 - **价值**：解决 Agent "用完即忘"的问题，将隐性知识显性化为可复用的 Markdown 文档。
 
+### 14. 会话持久化与向量记忆 (Persistence & Vector Memory) Phase 4.6
+
+- **目标**：实现会话数据的持久化存储，并利用向量索引实现“无限”的记忆 recall。
+- **状态**：✅ 已完成 (2026-02-08)
+- **实现内容**：
+    - **Session Persistence**：
+        - `ConversationStore` 升级为文件支持。
+        - 实时将会话写入 `.belldandy/sessions/<conversationId>.jsonl`。
+        - 重启后自动加载最近会话，上下文不丢失。
+    - **Session Indexing**：
+        - `MemoryIndexer` 支持 `.jsonl` 格式解析。
+        - 自动监听 `sessions` 目录，增量生成向量索引。
+        - 实现了 `session` 类型的记忆块 (`memory_type='session'`)。
+        - 解决了首次启动时向量表未初始化的 Bootstrap 问题。
+        - `MemoryManager` 启动时自动检测并补全缺失的 Embedding。
+    - **Configuration**:
+        - 支持自定义 Embedding 模型配置（如适配 `text-embedding-v1`）。
+        - 实现了环境变量优先级逻辑 (`BELLDANDY_` > `OPENAI_`)。
+- **价值**：
+    - **数据安全**：意外崩溃或重启不再丢失当前对话。
+    - **全渠道记忆**：无论是网页还是飞书，对话记录都统一归档并在未来可检索。
+    - **长程记忆**：Agent 可以通过 `memory_search` 回忆起几天甚至几个月前的对话细节。
+
 ---
 
 ### 6. Phase 2.5: 可视化配置 & System Doctor (用户体验升级)

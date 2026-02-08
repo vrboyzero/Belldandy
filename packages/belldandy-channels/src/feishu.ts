@@ -2,10 +2,13 @@ import * as lark from "@larksuiteoapi/node-sdk";
 import type { BelldandyAgent } from "@belldandy/agent";
 import type { Channel } from "./types.js";
 
+import { ConversationStore } from "@belldandy/agent";
+
 export interface FeishuChannelConfig {
     appId: string;
     appSecret: string;
     agent: BelldandyAgent;
+    conversationStore: ConversationStore;
     initialChatId?: string;
     onChatIdUpdate?: (chatId: string) => void;
 }
@@ -21,6 +24,7 @@ export class FeishuChannel implements Channel {
     private readonly client: lark.Client;
     private readonly wsClient: lark.WSClient;
     private readonly agent: BelldandyAgent;
+    private readonly conversationStore: ConversationStore;
     private _running = false;
     private lastChatId?: string; // Track the last active chat for proactive messaging
     private onChatIdUpdate?: (chatId: string) => void;
@@ -36,6 +40,7 @@ export class FeishuChannel implements Channel {
 
     constructor(config: FeishuChannelConfig) {
         this.agent = config.agent;
+        this.conversationStore = config.conversationStore;
 
         // HTTP Client for sending messages
         this.client = new lark.Client({
@@ -89,7 +94,7 @@ export class FeishuChannel implements Channel {
             // Note: @larksuiteoapi/node-sdk WSClient 目前没有公开的 stop/close 方法
             // 如果未来 SDK 支持，可以在这里调用
             // await this.wsClient.stop();
-            
+
             this._running = false;
             this.processedMessages.clear();
             console.log(`[${this.name}] Channel stopped.`);
@@ -161,9 +166,16 @@ export class FeishuChannel implements Channel {
         // The agent is responsible for context via ConversationStore (not linked here yet)
         // We pass conversationId as chatId
 
+        // [PERSISTENCE] Add User Message to Store
+        this.conversationStore.addMessage(chatId, "user", text);
+
+        // [PERSISTENCE] Get History from Store
+        const history = this.conversationStore.getHistory(chatId);
+
         const runInput = {
             conversationId: chatId, // Map Feishu Chat ID to Conversation ID
             text: text,
+            history: history, // Provide history context
             // We could pass sender info in meta
             meta: {
                 from: sender,
@@ -192,6 +204,9 @@ export class FeishuChannel implements Channel {
             }
 
             if (replyText) {
+                // [PERSISTENCE] Add Assistant Message to Store
+                this.conversationStore.addMessage(chatId, "assistant", replyText);
+
                 await this.reply(msgId, replyText);
                 console.log(`Feishu: Repled to message ${msgId}`);
             } else {
@@ -228,7 +243,7 @@ export class FeishuChannel implements Channel {
      */
     async sendProactiveMessage(content: string, chatId?: string): Promise<boolean> {
         const targetChatId = chatId || this.lastChatId;
-        
+
         if (!targetChatId) {
             console.warn(`[${this.name}] Cannot send proactive message - no active chat ID found.`);
             return false;

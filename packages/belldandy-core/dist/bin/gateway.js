@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { OpenAIChatAgent, ToolEnabledAgent, ensureWorkspace, loadWorkspaceFiles, buildSystemPrompt, } from "@belldandy/agent";
+import { OpenAIChatAgent, ToolEnabledAgent, ensureWorkspace, loadWorkspaceFiles, buildSystemPrompt, ConversationStore, } from "@belldandy/agent";
 import { ToolExecutor, DEFAULT_POLICY, fetchTool, applyPatchTool, fileReadTool, fileWriteTool, fileDeleteTool, listFilesTool, createMemorySearchTool, createMemoryGetTool, browserOpenTool, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserGetContentTool, cameraSnapTool, imageGenerateTool, textToSpeechTool, runCommandTool, methodListTool, methodReadTool, methodCreateTool, methodSearchTool, logReadTool, logSearchTool, } from "@belldandy/skills";
 import { MemoryStore, MemoryIndexer, listMemoryFiles, ensureMemoryDir } from "@belldandy/memory";
 import { RelayServer } from "@belldandy/browser";
@@ -392,6 +392,13 @@ Use the 'edge' provider by default for free, high-quality speech.`;
         });
     }
     : undefined;
+// 7.5 Init Conversation Store (Shared)
+const sessionsDir = path.join(stateDir, "sessions");
+fs.mkdirSync(sessionsDir, { recursive: true });
+const conversationStore = new ConversationStore({
+    dataDir: sessionsDir,
+    maxHistory: 50, // Default history length
+});
 const server = await startGatewayServer({
     port,
     host,
@@ -399,6 +406,7 @@ const server = await startGatewayServer({
     webRoot,
     stateDir,
     agentFactory: createAgent,
+    conversationStore: conversationStore, // Pass shared instance
     onActivity,
     logger,
 });
@@ -451,6 +459,7 @@ if (feishuAppId && feishuAppSecret && createAgent) {
             appId: feishuAppId,
             appSecret: feishuAppSecret,
             agent: agent,
+            conversationStore: conversationStore, // [PERSISTENCE] Inject store
             initialChatId: (() => {
                 try {
                     const statePath = path.join(stateDir, "feishu-state.json");

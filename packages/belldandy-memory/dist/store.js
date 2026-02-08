@@ -240,6 +240,42 @@ export class MemoryStore {
             this.closed = true;
         }
     }
+    /**
+     * 初始化/准备向量表
+     */
+    prepareVectorStore(dimensions) {
+        this.ensureOpen();
+        this.ensureVectorTable(dimensions);
+    }
+    /**
+     * 获取未向量化的 chunks
+     */
+    getUnembeddedChunks(limit = 10) {
+        this.ensureOpen();
+        if (!this.vecDims)
+            return []; // Vector table not ready
+        // Find chunks that exist in 'chunks' but not in 'chunks_vec'
+        // NOTE: vec0 table uses rowid matching usually.
+        // We strictly use JOIN on rowid.
+        const stmt = this.db.prepare(`
+        SELECT c.* 
+        FROM chunks c
+        LEFT JOIN chunks_vec v ON c.rowid = v.rowid
+        WHERE v.rowid IS NULL
+        LIMIT ?
+    `);
+        const rows = stmt.all(limit);
+        return rows.map(row => ({
+            id: row.id,
+            sourcePath: row.source_path,
+            sourceType: row.source_type,
+            memoryType: row.memory_type,
+            startLine: row.start_line,
+            endLine: row.end_line,
+            content: row.content,
+            metadata: safeParseJson(row.metadata),
+        }));
+    }
     // ========== 向量存储方法 ==========
     ensureVectorTable(dimensions) {
         if (this.vecDims === dimensions)

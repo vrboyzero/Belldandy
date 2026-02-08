@@ -58,6 +58,7 @@ var FeishuChannel = /** @class */ (function () {
         this.processedMessages = new Set();
         this.MESSAGE_CACHE_SIZE = 1000;
         this.agent = config.agent;
+        this.conversationStore = config.conversationStore;
         // HTTP Client for sending messages
         this.client = new lark.Client({
             appId: config.appId,
@@ -143,7 +144,7 @@ var FeishuChannel = /** @class */ (function () {
     };
     FeishuChannel.prototype.handleMessage = function (data) {
         return __awaiter(this, void 0, void 0, function () {
-            var message, sender, chatId, msgId, firstKey, text, contentObj, runInput, stream, replyText, _a, stream_1, stream_1_1, item, e_1_1, e_2;
+            var message, sender, chatId, msgId, firstKey, text, contentObj, history, runInput, stream, replyText, _a, stream_1, stream_1_1, item, e_1_1, e_2;
             var _b, e_1, _c, _d;
             var _e, _f;
             return __generator(this, function (_g) {
@@ -196,9 +197,17 @@ var FeishuChannel = /** @class */ (function () {
                         if (!text)
                             return [2 /*return*/];
                         console.log("Feishu: Processing message ".concat(msgId, " from chat ").concat(chatId, ": \"").concat(text.slice(0, 50), "...\""));
+                        // Run the agent
+                        // We create a history context if possible, but for MVP we just send the text
+                        // The agent is responsible for context via ConversationStore (not linked here yet)
+                        // We pass conversationId as chatId
+                        // [PERSISTENCE] Add User Message to Store
+                        this.conversationStore.addMessage(chatId, "user", text);
+                        history = this.conversationStore.getHistory(chatId);
                         runInput = {
                             conversationId: chatId, // Map Feishu Chat ID to Conversation ID
                             text: text,
+                            history: history, // Provide history context
                             // We could pass sender info in meta
                             meta: {
                                 from: sender,
@@ -259,6 +268,8 @@ var FeishuChannel = /** @class */ (function () {
                     case 12: return [7 /*endfinally*/];
                     case 13:
                         if (!replyText) return [3 /*break*/, 15];
+                        // [PERSISTENCE] Add Assistant Message to Store
+                        this.conversationStore.addMessage(chatId, "assistant", replyText);
                         return [4 /*yield*/, this.reply(msgId, replyText)];
                     case 14:
                         _g.sent();

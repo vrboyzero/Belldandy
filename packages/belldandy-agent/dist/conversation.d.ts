@@ -23,25 +23,37 @@ export type ConversationStoreOptions = {
     maxHistory?: number;
     /** 会话过期时间（秒，默认 3600） */
     ttlSeconds?: number;
+    /** 持久化存储目录 (可选) */
+    dataDir?: string;
 };
 /**
- * 会话存储（内存实现）
- * 用于管理对话上下文历史
+ * 会话存储
+ * 用于管理对话上下文历史，支持文件持久化 (JSONL)
  */
 export declare class ConversationStore {
     private conversations;
     private readonly maxHistory;
     private readonly ttlSeconds;
+    private readonly dataDir?;
     constructor(options?: ConversationStoreOptions);
     /**
      * 获取会话
+     * 优先从内存获取，若无则尝试从文件加载
      */
     get(id: string): Conversation | undefined;
+    /**
+     * 从文件加载会话
+     */
+    private loadFromFile;
     /**
      * 添加消息到会话
      * 如果会话不存在会自动创建
      */
     addMessage(id: string, role: "user" | "assistant", content: string): void;
+    /**
+     * 追加消息到文件
+     */
+    private appendToFile;
     /**
      * 清除会话
      */

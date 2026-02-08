@@ -3,6 +3,7 @@ import * as path from "node:path";
 import * as crypto from "node:crypto";
 import * as chokidar from "chokidar";
 import { Chunker } from "./chunker.js";
+import { extractTextFromSession } from "./session-loader.js";
 export class MemoryIndexer {
     store;
     chunker;
@@ -12,7 +13,7 @@ export class MemoryIndexer {
         this.store = store;
         this.chunker = new Chunker(options.chunkOptions);
         this.options = {
-            extensions: options.extensions ?? [".md", ".txt"],
+            extensions: options.extensions ?? [".md", ".txt", ".jsonl"],
             chunkOptions: options.chunkOptions ?? {},
             ignorePatterns: options.ignorePatterns ?? ["node_modules", ".git", "dist", "build", ".belldandy"],
             watch: options.watch ?? false,
@@ -43,6 +44,7 @@ export class MemoryIndexer {
         try {
             const stats = await fs.stat(filePath);
             const mtime = stats.mtime.toISOString();
+            const ext = path.extname(filePath).toLowerCase();
             // 检查增量：对比存储中的最后更新时间与文件修改时间
             // 注意：这里我们简单地用 chunks 中最新的 updated_at（实际上是索引入库时间） vs 文件 mtime
             // 为了更严谨，我们应该在 metadata 里存原始文件的 mtime
@@ -55,7 +57,26 @@ export class MemoryIndexer {
                 }
             }
             // 读取并分块
-            const content = await fs.readFile(filePath, "utf-8");
+            let content = "";
+            let memoryType = "other";
+            if (ext === ".jsonl") {
+                content = await extractTextFromSession(filePath);
+                memoryType = "session";
+            }
+            else {
+                content = await fs.readFile(filePath, "utf-8");
+                // Determine memory type
+                const fileName = path.basename(filePath);
+                const parentDir = path.basename(path.dirname(filePath));
+                if (fileName === "MEMORY.md" || fileName === "memory.md") {
+                    memoryType = "core";
+                }
+                else if (parentDir === "memory" && /^\d{4}-\d{2}-\d{2}\.md$/.test(fileName)) {
+                    memoryType = "daily";
+                }
+            }
+            if (!content.trim())
+                return;
             const chunksStr = this.chunker.splitText(content);
             // 事务性更新：先删旧，再插新
             // 注意：SQLite DatabaseSync 暂时没有显式 transaction API (Node 22)，
@@ -63,22 +84,12 @@ export class MemoryIndexer {
             // 对于 MVP，我们可以接受。
             this.store.deleteBySource(filePath);
             const baseId = crypto.createHash("md5").update(filePath).digest("hex");
-            // Determine memory type
-            const fileName = path.basename(filePath);
-            const parentDir = path.basename(path.dirname(filePath));
-            let memoryType = "other";
-            if (fileName === "MEMORY.md" || fileName === "memory.md") {
-                memoryType = "core";
-            }
-            else if (parentDir === "memory" && /^\d{4}-\d{2}-\d{2}\.md$/.test(fileName)) {
-                memoryType = "daily";
-            }
             for (let i = 0; i < chunksStr.length; i++) {
                 const chunkContent = chunksStr[i];
                 const chunk = {
                     id: `${baseId}_${i}`,
                     sourcePath: filePath,
-                    sourceType: "file",
+                    sourceType: ext === ".jsonl" ? "session" : "file",
                     memoryType: memoryType,
                     content: chunkContent,
                     metadata: {
