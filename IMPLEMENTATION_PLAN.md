@@ -4,7 +4,8 @@
 
 - **开发目录**：`e:\project\Belldandy`
 - **参考目录（只读）**：`E:\project\belldandy\openclaw`（不修改、不编码）
-- 默认目标：先完成 **WebChat → Gateway → Agent → Reply** 的最小闭环，再扩展渠道/skills/memory。
+- **参考目录（只读）**：`E:\project\belldandy\UI-TARS-desktop-main`（不修改、不编码）
+
 
 ## 1.1 技术栈与工程形态（建议）
 
@@ -1046,3 +1047,78 @@ packages/belldandy-skills/src/builtin/
 - **自我进化**：Agent 能基于历史日志学习和改进
 - **运维友好**：自动轮转和清理，无需人工干预
 - **调试利器**：详细日志帮助快速定位问题
+
+### Phase 19：安全加固（Security Hardening）✅ 已完成
+
+**目标**：修复安全评估发现的 P0-P3 风险点，综合 OWASP 推荐方案与 ws 最佳实践。
+
+**完成时间**：2026-02-08
+
+#### 19.1 P0：配对绕过风险（Critical）
+
+| 问题 | `workspace.read/list` 未纳入 `secureMethods`，可读取 `allowlist.json` 后伪造 `clientId` |
+|------|------|
+| 修复文件 | `packages/belldandy-core/src/server.ts` |
+| 方案 | 1. 将 `workspace.read/list` 加入 `secureMethods` 数组<br>2. 对 `allowlist.json/pairing.json/mcp.json/feishu-state.json` 做显式拒绝 |
+| **状态** | ✅ 已实现（L245, L507-512） |
+
+#### 19.2 P1：CSWSH 防护（High）
+
+| 问题 | 本机浏览器恶意脚本可连接 `ws://127.0.0.1:28889` |
+|------|------|
+| 修复文件 | `server.ts` + `gateway.ts` |
+| 方案 | 1. 新增 Origin Header 白名单校验（OWASP 推荐）<br>2. `HOST=0.0.0.0` + `AUTH_MODE=none` 组合强制退出 |
+| **状态** | ✅ 已实现（server.ts L84-112, gateway.ts L281-286） |
+
+**新增环境变量**：`BELLDANDY_ALLOWED_ORIGINS`（WebSocket Origin 白名单，逗号分隔）
+
+#### 19.3 P1：配置泄露（High）
+
+| 问题 | `config.read` 原样返回 API Key，`config.update` 可写任意键 |
+|------|------|
+| 修复文件 | `packages/belldandy-core/src/server.ts` |
+| 方案 | 1. `config.read` 对 `*KEY*/SECRET/TOKEN/PASSWORD*` 字段返回 `[REDACTED]`<br>2. `config.update` 仅允许修改白名单内的配置项 |
+| **状态** | ✅ 已实现（L346-356, L363-376） |
+
+#### 19.4 P2：MCP/危险工具收紧（Medium）
+
+| 问题 | `run_command/terminal` 一旦注册即为 RCE 通道 |
+|------|------|
+| 修复文件 | `packages/belldandy-core/src/bin/gateway.ts` |
+| 方案 | 新增 `BELLDANDY_DANGEROUS_TOOLS_ENABLED` 环境变量，默认 `false` |
+| **状态** | ✅ 已实现（L318-319, L330-331） |
+
+#### 19.5 P2：SSRF 防护增强（Medium）
+
+| 问题 | 整数 IP（`http://2130706433/`）和 DNS Rebinding 可绕过检查 |
+|------|------|
+| 修复文件 | `packages/belldandy-skills/src/builtin/fetch.ts` |
+| 方案 | 在发送请求前做 `dns.lookup` 解析，对结果 IP 再次校验是否为内网 |
+| **状态** | ✅ 已实现（L2, L99-109, L215-231） |
+
+#### 19.6 P3：浏览器域名控制（Low）
+
+| 问题 | `browser_open` 可访问任意 URL |
+|------|------|
+| 修复文件 | `packages/belldandy-skills/src/builtin/browser/tools.ts` |
+| 方案 | 双模式支持：`BELLDANDY_BROWSER_ALLOWED_DOMAINS`（白名单）+ `BELLDANDY_BROWSER_DENIED_DOMAINS`（黑名单，优先级更高） |
+| **状态** | ✅ 已实现（L11-45, L168-174, L204-210） |
+
+#### 19.7 新增环境变量汇总
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `BELLDANDY_ALLOWED_ORIGINS` | WebSocket Origin 白名单（逗号分隔） | 本地自动允许 localhost |
+| `BELLDANDY_DANGEROUS_TOOLS_ENABLED` | 启用 run_command 等危险工具 | `false` |
+| `BELLDANDY_BROWSER_ALLOWED_DOMAINS` | 浏览器白名单（空=不限制） | 空 |
+| `BELLDANDY_BROWSER_DENIED_DOMAINS` | 浏览器黑名单（优先于白名单） | 空 |
+
+#### 19.8 验收用例
+
+- [x] `workspace.read('allowlist.json')` → 403 Forbidden
+- [x] `config.read` 返回 `BELLDANDY_OPENAI_API_KEY="[REDACTED]"`
+- [x] `HOST=0.0.0.0` + `AUTH_MODE=none` 启动 → 进程退出
+- [x] 恶意网页 `new WebSocket('ws://127.0.0.1:28889')` → Origin 被拒绝
+
+**环境变量已更新到 `.env.example`**
+

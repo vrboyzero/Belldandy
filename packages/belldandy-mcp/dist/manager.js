@@ -7,6 +7,7 @@
 import { MCPClient } from "./client.js";
 import { MCPToolBridge, toOpenAIFunctions, toAnthropicTools } from "./tool-bridge.js";
 import { loadConfig, createDefaultConfig, getAutoConnectServers, addServer, removeServer, updateServer, } from "./config.js";
+import { mcpLog, mcpError } from "./logger-adapter.js";
 // ============================================================================
 // MCP 管理器实现
 // ============================================================================
@@ -41,10 +42,10 @@ export class MCPManager {
      */
     async initialize() {
         if (this.initialized) {
-            console.log("[MCPManager] 已经初始化，跳过");
+            mcpLog("MCPManager", "已经初始化，跳过");
             return;
         }
-        console.log("[MCPManager] 正在初始化...");
+        mcpLog("MCPManager", "正在初始化...");
         try {
             // 尝试创建默认配置（如果不存在）
             await createDefaultConfig();
@@ -54,18 +55,18 @@ export class MCPManager {
             const autoConnectServers = await getAutoConnectServers();
             // 并行连接所有自动连接的服务器
             if (autoConnectServers.length > 0) {
-                console.log(`[MCPManager] 正在自动连接 ${autoConnectServers.length} 个服务器...`);
+                mcpLog("MCPManager", `正在自动连接 ${autoConnectServers.length} 个服务器...`);
                 const results = await Promise.allSettled(autoConnectServers.map((server) => this.connect(server.id)));
                 // 统计结果
                 const succeeded = results.filter((r) => r.status === "fulfilled").length;
                 const failed = results.filter((r) => r.status === "rejected").length;
-                console.log(`[MCPManager] 自动连接完成: ${succeeded} 成功, ${failed} 失败`);
+                mcpLog("MCPManager", `自动连接完成: ${succeeded} 成功, ${failed} 失败`);
             }
             this.initialized = true;
-            console.log("[MCPManager] 初始化完成");
+            mcpLog("MCPManager", "初始化完成");
         }
         catch (error) {
-            console.error("[MCPManager] 初始化失败:", error);
+            mcpError("MCPManager", "初始化失败", error);
             throw error;
         }
     }
@@ -73,7 +74,7 @@ export class MCPManager {
      * 关闭所有连接并清理资源
      */
     async shutdown() {
-        console.log("[MCPManager] 正在关闭...");
+        mcpLog("MCPManager", "正在关闭...");
         // 断开所有客户端
         const disconnectPromises = Array.from(this.clients.keys()).map((serverId) => this.disconnect(serverId));
         await Promise.allSettled(disconnectPromises);
@@ -82,7 +83,7 @@ export class MCPManager {
         this.toolBridge.unregisterAllTools();
         this.eventListeners.clear();
         this.initialized = false;
-        console.log("[MCPManager] 已关闭");
+        mcpLog("MCPManager", "已关闭");
     }
     // ==========================================================================
     // 连接管理
@@ -97,7 +98,7 @@ export class MCPManager {
         if (this.clients.has(serverId)) {
             const client = this.clients.get(serverId);
             if (client.getState().status === "connected") {
-                console.log(`[MCPManager] 服务器 ${serverId} 已连接，跳过`);
+                mcpLog("MCPManager", `服务器 ${serverId} 已连接，跳过`);
                 return;
             }
         }
@@ -109,7 +110,7 @@ export class MCPManager {
         if (serverConfig.enabled === false) {
             throw new Error(`服务器 "${serverId}" 已禁用`);
         }
-        console.log(`[MCPManager] 正在连接到服务器: ${serverId}`);
+        mcpLog("MCPManager", `正在连接到服务器: ${serverId}`);
         // 创建客户端
         const client = new MCPClient(serverConfig);
         // 添加事件监听
@@ -122,10 +123,10 @@ export class MCPManager {
             // 注册工具
             const state = client.getState();
             this.toolBridge.registerTools(state.tools);
-            console.log(`[MCPManager] 已连接到服务器 ${serverId}，注册了 ${state.tools.length} 个工具`);
+            mcpLog("MCPManager", `已连接到服务器 ${serverId}，注册了 ${state.tools.length} 个工具`);
         }
         catch (error) {
-            console.error(`[MCPManager] 连接服务器 ${serverId} 失败:`, error);
+            mcpError("MCPManager", `连接服务器 ${serverId} 失败`, error);
             throw error;
         }
     }
@@ -137,17 +138,17 @@ export class MCPManager {
     async disconnect(serverId) {
         const client = this.clients.get(serverId);
         if (!client) {
-            console.log(`[MCPManager] 服务器 ${serverId} 未连接，跳过`);
+            mcpLog("MCPManager", `服务器 ${serverId} 未连接，跳过`);
             return;
         }
-        console.log(`[MCPManager] 正在断开服务器: ${serverId}`);
+        mcpLog("MCPManager", `正在断开服务器: ${serverId}`);
         // 注销工具
         this.toolBridge.unregisterServerTools(serverId);
         // 断开连接
         await client.disconnect();
         // 移除客户端
         this.clients.delete(serverId);
-        console.log(`[MCPManager] 已断开服务器: ${serverId}`);
+        mcpLog("MCPManager", `已断开服务器: ${serverId}`);
     }
     /**
      * 重新连接指定服务器
@@ -266,7 +267,7 @@ export class MCPManager {
      */
     async reloadConfig() {
         this.config = await loadConfig();
-        console.log("[MCPManager] 配置已重新加载");
+        mcpLog("MCPManager", "配置已重新加载");
     }
     /**
      * 添加服务器配置
@@ -331,7 +332,7 @@ export class MCPManager {
                 listener(event);
             }
             catch (err) {
-                console.error("[MCPManager] 事件监听器错误:", err);
+                mcpError("MCPManager", "事件监听器错误", err);
             }
         }
         // 处理工具更新事件
@@ -391,20 +392,12 @@ export class MCPManager {
      */
     printDiagnostics() {
         const diag = this.getDiagnostics();
-        console.log("\n=== MCP Manager 诊断信息 ===");
-        console.log(`初始化状态: ${diag.initialized ? "是" : "否"}`);
-        console.log(`服务器数量: ${diag.serverCount}`);
-        console.log(`已连接数量: ${diag.connectedCount}`);
-        console.log(`工具总数: ${diag.toolCount}`);
-        console.log(`资源总数: ${diag.resourceCount}`);
+        mcpLog("MCPManager", `诊断: 初始化=${diag.initialized}, 服务器=${diag.serverCount}, 已连接=${diag.connectedCount}, 工具=${diag.toolCount}, 资源=${diag.resourceCount}`);
         if (diag.servers.length > 0) {
-            console.log("\n服务器列表:");
             for (const server of diag.servers) {
-                console.log(`  - ${server.name} (${server.id}): ${server.status}, ` +
-                    `${server.toolCount} 工具, ${server.resourceCount} 资源`);
+                mcpLog("MCPManager", `  - ${server.name} (${server.id}): ${server.status}, ${server.toolCount} 工具, ${server.resourceCount} 资源`);
             }
         }
-        console.log("============================\n");
     }
 }
 // ============================================================================

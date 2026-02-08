@@ -15,7 +15,7 @@ export const terminalTool = {
                 // For 'start'
                 cmd: {
                     type: "string",
-                    description: "要启动的命令或 Shell (默认 bash/powershell)",
+                    description: "要启动的 Shell (默认: Windows=cmd.exe, 其他=bash；需 PowerShell 可传 powershell.exe)",
                 },
                 args: {
                     type: 'array',

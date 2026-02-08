@@ -6,19 +6,28 @@ export const DEFAULT_POLICY = {
     deniedDomains: [],
     maxTimeoutMs: 30_000,
     maxResponseBytes: 512_000,
+    exec: {
+        quickTimeoutMs: 5_000,
+        longTimeoutMs: 300_000,
+        nonInteractive: { enabled: true },
+    },
 };
 export class ToolExecutor {
     tools;
     workspaceRoot;
+    extraWorkspaceRoots;
     policy;
     auditLogger;
     agentCapabilities;
+    logger;
     constructor(options) {
         this.tools = new Map(options.tools.map(t => [t.definition.name, t]));
         this.workspaceRoot = options.workspaceRoot;
+        this.extraWorkspaceRoots = options.extraWorkspaceRoots ?? [];
         this.policy = { ...DEFAULT_POLICY, ...options.policy };
         this.auditLogger = options.auditLogger;
         this.agentCapabilities = options.agentCapabilities;
+        this.logger = options.logger;
     }
     /** 获取所有工具定义（用于发送给模型） */
     getDefinitions() {
@@ -38,7 +47,7 @@ export class ToolExecutor {
     /** 动态注册工具 */
     registerTool(tool) {
         if (this.tools.has(tool.definition.name)) {
-            console.warn(`[ToolExecutor] 工具 "${tool.definition.name}" 已存在，将被覆盖`);
+            (this.logger?.warn ?? console.warn)(`[ToolExecutor] 工具 "${tool.definition.name}" 已存在，将被覆盖`);
         }
         this.tools.set(tool.definition.name, tool);
     }
@@ -69,8 +78,16 @@ export class ToolExecutor {
         const context = {
             conversationId,
             workspaceRoot: this.workspaceRoot,
+            extraWorkspaceRoots: this.extraWorkspaceRoots.length > 0 ? this.extraWorkspaceRoots : undefined,
             policy: this.policy,
             agentCapabilities: this.agentCapabilities,
+            logger: this.logger ? {
+                info: (m) => this.logger.info(m),
+                warn: (m) => this.logger.warn(m),
+                error: (m) => this.logger.error(m),
+                debug: this.logger.debug ? (m) => this.logger.debug(m) : () => { },
+                trace: () => { },
+            } : undefined,
         };
         try {
             const result = await tool.execute(request.arguments, context);

@@ -81,7 +81,35 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
   });
 
   const server = http.createServer(app);
-  const wss = new WebSocketServer({ server });
+
+  // [SECURITY] Origin Header 白名单校验（防 CSWSH）
+  const allowedOriginsRaw = process.env.BELLDANDY_ALLOWED_ORIGINS;
+  const hostVal = opts.host ?? "127.0.0.1";
+  const allowedOrigins = allowedOriginsRaw
+    ? allowedOriginsRaw.split(",").map((o) => o.trim()).filter(Boolean)
+    : (hostVal === "127.0.0.1" || hostVal === "localhost")
+      ? ["http://localhost", "http://127.0.0.1", "https://localhost", "https://127.0.0.1"]
+      : []; // 公网绑定时默认拒绝所有跨域（需显式配置）
+
+  const wss = new WebSocketServer({
+    server,
+    verifyClient: (info: { origin?: string; req: http.IncomingMessage; secure: boolean }) => {
+      // 若未配置白名单（空数组），则仅对公网绑定生效（拒绝所有）
+      if (allowedOrigins.length === 0 && (hostVal === "127.0.0.1" || hostVal === "localhost")) {
+        return true; // 本地开发默认放行
+      }
+      if (allowedOrigins.length === 0) {
+        log.error("ws", `Rejected connection: no allowed origins configured for ${hostVal}`);
+        return false;
+      }
+      const origin = info.origin || "";
+      const allowed = allowedOrigins.some((ao) => origin.startsWith(ao));
+      if (!allowed) {
+        log.info("ws", `Rejected origin: ${origin}`);
+      }
+      return allowed;
+    },
+  });
 
   // 初始化会话存储
   const conversationStore = new ConversationStore(opts.conversationStoreOptions);
@@ -242,7 +270,7 @@ async function handleReq(
     conversationStore: ConversationStore;
   },
 ): Promise<GatewayResFrame | null> {
-  const secureMethods = ["message.send", "config.read", "config.update", "system.restart", "system.doctor", "workspace.write"];
+  const secureMethods = ["message.send", "config.read", "config.update", "system.restart", "system.doctor", "workspace.write", "workspace.read", "workspace.list"];
   if (secureMethods.includes(req.method)) {
     const allowed = await isClientAllowed({ clientId: ctx.clientId, stateDir: ctx.stateDir });
     if (!allowed) {
@@ -342,6 +370,15 @@ async function handleReq(
       } catch (e) {
         // ignore
       }
+
+      // [SECURITY] 对敏感字段进行脱敏处理
+      const REDACT_PATTERNS = [/KEY/i, /SECRET/i, /TOKEN/i, /PASSWORD/i, /CREDENTIAL/i];
+      for (const key of Object.keys(config)) {
+        if (REDACT_PATTERNS.some(p => p.test(key))) {
+          config[key] = "[REDACTED]";
+        }
+      }
+
       return { type: "res", id: req.id, ok: true, payload: { config } };
     }
 
@@ -350,6 +387,19 @@ async function handleReq(
       const updates = params?.updates;
       if (!updates || typeof updates !== "object") {
         return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "Missing updates" } };
+      }
+
+      // [SECURITY] 仅允许修改白名单内的配置项
+      const SAFE_UPDATE_KEYS = new Set([
+        "BELLDANDY_OPENAI_BASE_URL", "BELLDANDY_OPENAI_MODEL",
+        "BELLDANDY_HEARTBEAT_ENABLED", "BELLDANDY_HEARTBEAT_INTERVAL",
+        "BELLDANDY_HEARTBEAT_ACTIVE_HOURS", "BELLDANDY_AGENT_TIMEOUT_MS",
+        "BELLDANDY_OPENAI_STREAM", "BELLDANDY_MEMORY_ENABLED"
+      ]);
+      for (const key of Object.keys(updates)) {
+        if (!SAFE_UPDATE_KEYS.has(key)) {
+          return { type: "res", id: req.id, ok: false, error: { code: "forbidden", message: `不允许修改配置项: ${key}` } };
+        }
       }
 
       const envPath = path.join(process.cwd(), ".env.local");
@@ -433,7 +483,7 @@ async function handleReq(
     case "workspace.list": {
       const params = req.params as { path?: string } | undefined;
       const relativePath = params?.path ?? "";
-      
+
       // 验证路径安全性
       const targetDir = path.resolve(ctx.stateDir, relativePath);
       if (!targetDir.startsWith(ctx.stateDir)) {
@@ -487,7 +537,7 @@ async function handleReq(
     case "workspace.read": {
       const params = req.params as { path?: string } | undefined;
       const relativePath = params?.path;
-      
+
       if (!relativePath || typeof relativePath !== "string") {
         return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "path is required" } };
       }
@@ -503,6 +553,12 @@ async function handleReq(
       const ext = path.extname(targetFile).toLowerCase();
       if (!ALLOWED_EXTENSIONS.includes(ext)) {
         return { type: "res", id: req.id, ok: false, error: { code: "invalid_type", message: "不支持的文件类型" } };
+      }
+
+      // [SECURITY] 禁止访问内部状态文件
+      const SENSITIVE_FILES = ["allowlist.json", "pairing.json", "mcp.json", "feishu-state.json"];
+      if (SENSITIVE_FILES.includes(path.basename(relativePath).toLowerCase())) {
+        return { type: "res", id: req.id, ok: false, error: { code: "forbidden", message: "禁止访问内部状态文件" } };
       }
 
       // 检查文件是否存在
@@ -522,7 +578,7 @@ async function handleReq(
       const params = req.params as { path?: string; content?: string } | undefined;
       const relativePath = params?.path;
       const content = params?.content;
-      
+
       if (!relativePath || typeof relativePath !== "string") {
         return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "path is required" } };
       }

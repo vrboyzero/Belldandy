@@ -12,20 +12,43 @@ function isDeniedPath(relativePath, deniedPaths) {
     }
     return null;
 }
-/** 规范化并验证路径在工作区内 */
-function resolveAndValidatePath(relativePath, workspaceRoot) {
-    const normalized = relativePath.replace(/\\/g, "/");
-    // 禁止绝对路径
-    if (path.isAbsolute(normalized)) {
-        return { ok: false, error: "禁止使用绝对路径，请使用相对于工作区的路径" };
+/** 检查路径是否在指定根目录下（不越界） */
+function isUnderRoot(absolute, root) {
+    const resolvedRoot = path.resolve(root);
+    const rel = path.relative(resolvedRoot, absolute);
+    if (rel.startsWith("..") || path.isAbsolute(rel))
+        return { ok: false };
+    return { ok: true, relative: rel.replace(/\\/g, "/") };
+}
+/** 规范化并验证路径在工作区内（主工作区或 extraWorkspaceRoots 中的任一根目录下）；返回匹配的根目录供列目录时计算相对路径用 */
+function resolveAndValidatePath(pathArg, workspaceRoot, extraWorkspaceRoots) {
+    const trimmed = (pathArg || "").trim();
+    if (!trimmed) {
+        return { ok: false, error: "路径不能为空" };
     }
-    const absolute = path.resolve(workspaceRoot, normalized);
-    const resolvedRoot = path.resolve(workspaceRoot);
-    // 检查路径遍历
-    if (!absolute.startsWith(resolvedRoot + path.sep) && absolute !== resolvedRoot) {
-        return { ok: false, error: "路径越界：不允许访问工作区外的文件" };
+    const normalized = trimmed.replace(/\\/g, "/");
+    const mainRoot = path.resolve(workspaceRoot);
+    let absolute;
+    if (path.isAbsolute(normalized) || (trimmed.length >= 2 && /^[A-Za-z]:/.test(trimmed))) {
+        absolute = path.resolve(normalized);
     }
-    return { ok: true, absolute, relative: normalized };
+    else {
+        absolute = path.resolve(mainRoot, normalized);
+    }
+    const underMain = isUnderRoot(absolute, mainRoot);
+    if (underMain.ok) {
+        return { ok: true, absolute, relative: underMain.relative, effectiveRoot: mainRoot };
+    }
+    if (extraWorkspaceRoots?.length) {
+        for (const extra of extraWorkspaceRoots) {
+            const resolvedExtra = path.resolve(extra);
+            const underExtra = isUnderRoot(absolute, resolvedExtra);
+            if (underExtra.ok) {
+                return { ok: true, absolute, relative: underExtra.relative, effectiveRoot: resolvedExtra };
+            }
+        }
+    }
+    return { ok: false, error: "路径越界：不允许访问工作区外的目录" };
 }
 async function listDirectory(dir, workspaceRoot, recursive, maxDepth, currentDepth, entries) {
     if (currentDepth > maxDepth)
@@ -73,13 +96,13 @@ async function listDirectory(dir, workspaceRoot, recursive, maxDepth, currentDep
 export const listFilesTool = {
     definition: {
         name: "list_files",
-        description: "列出工作区内指定目录的文件和子目录。用于探索项目结构、查找文件位置。路径必须是相对于工作区根目录的相对路径。",
+        description: "列出工作区内或 BELLDANDY_EXTRA_WORKSPACE_ROOTS 配置的根目录下指定目录的文件和子目录。path 可为相对路径（相对主工作区）或允许范围内的绝对路径（如 C:/、E:/ 下的路径）。",
         parameters: {
             type: "object",
             properties: {
                 path: {
                     type: "string",
-                    description: "相对于工作区根目录的目录路径（默认为当前目录 '.'）",
+                    description: "目录路径：相对主工作区的相对路径，或允许的绝对路径如 C:/Users、E:/project（默认为 '.' 即主工作区根）",
                 },
                 recursive: {
                     type: "boolean",
@@ -111,12 +134,12 @@ export const listFilesTool = {
         const depth = typeof args.depth === "number" && args.depth > 0
             ? Math.min(args.depth, 10)
             : 3;
-        // 路径验证
-        const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot);
+        // 路径验证（主工作区或 extraWorkspaceRoots 下的目录均可）
+        const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot, context.extraWorkspaceRoots);
         if (!pathResult.ok) {
             return makeError(pathResult.error);
         }
-        const { absolute, relative } = pathResult;
+        const { absolute, relative, effectiveRoot } = pathResult;
         // 黑名单检查
         const denied = isDeniedPath(relative, context.policy.deniedPaths);
         if (denied) {
@@ -128,7 +151,7 @@ export const listFilesTool = {
                 return makeError(`路径不是目录：${relative}`);
             }
             const entries = [];
-            await listDirectory(absolute, context.workspaceRoot, recursive, depth, 1, entries);
+            await listDirectory(absolute, effectiveRoot, recursive, depth, 1, entries);
             // 按类型和名称排序
             entries.sort((a, b) => {
                 if (a.type !== b.type) {

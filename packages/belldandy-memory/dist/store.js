@@ -1,7 +1,8 @@
 import { DatabaseSync } from "node:sqlite";
 import { vectorToBuffer, vectorFromBuffer } from "./embeddings/index.js";
 import { loadSqliteVec } from "./sqlite-vec.js";
-const SCHEMA = `
+// 基础表结构（不依赖 FTS5）。Node 内置 node:sqlite 可能未编译 FTS5，需可选创建。
+const SCHEMA_BASE = `
 CREATE TABLE IF NOT EXISTS chunks (
   id TEXT PRIMARY KEY,
   source_path TEXT NOT NULL,
@@ -18,28 +19,6 @@ CREATE TABLE IF NOT EXISTS chunks (
 CREATE INDEX IF NOT EXISTS idx_chunks_source ON chunks(source_path);
 CREATE INDEX IF NOT EXISTS idx_chunks_updated ON chunks(updated_at);
 
--- FTS5 全文索引
-CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-  content,
-  content='chunks',
-  content_rowid='rowid',
-  tokenize='unicode61'
-);
-
--- 触发器：同步 FTS 索引
-CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
-  INSERT INTO chunks_fts(rowid, content) VALUES (NEW.rowid, NEW.content);
-END;
-
-CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
-  INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES('delete', OLD.rowid, OLD.content);
-END;
-
-CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
-  INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES('delete', OLD.rowid, OLD.content);
-  INSERT INTO chunks_fts(rowid, content) VALUES (NEW.rowid, NEW.content);
-END;
-
 -- Embedding 缓存表（避免重复计算相同内容）
 CREATE TABLE IF NOT EXISTS embedding_cache (
   content_hash TEXT PRIMARY KEY,
@@ -55,14 +34,52 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT
 );
 `;
+// FTS5 全文索引（仅在 SQLite 包含 fts5 时可用，如 better-sqlite3；Node 内置 node:sqlite 常不包含）
+const SCHEMA_FTS5 = `
+CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+  content,
+  content='chunks',
+  content_rowid='rowid',
+  tokenize='unicode61'
+);
+
+CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
+  INSERT INTO chunks_fts(rowid, content) VALUES (NEW.rowid, NEW.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
+  INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES('delete', OLD.rowid, OLD.content);
+END;
+
+CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
+  INSERT INTO chunks_fts(chunks_fts, rowid, content) VALUES('delete', OLD.rowid, OLD.content);
+  INSERT INTO chunks_fts(rowid, content) VALUES (NEW.rowid, NEW.content);
+END;
+`;
 export class MemoryStore {
     db;
     closed = false;
     vecDims = null;
+    /** 当前 SQLite 是否支持 FTS5（Node 内置 node:sqlite 常不包含，会降级为 LIKE 搜索） */
+    hasFts5;
     constructor(dbPath) {
         this.db = new DatabaseSync(dbPath, { allowExtension: true });
         loadSqliteVec(this.db);
-        this.db.exec(SCHEMA);
+        this.db.exec(SCHEMA_BASE);
+        try {
+            this.db.exec(SCHEMA_FTS5);
+            this.hasFts5 = true;
+        }
+        catch (err) {
+            const msg = String(err.message ?? err);
+            if (msg.includes("fts5") || msg.includes("no such module")) {
+                this.hasFts5 = false;
+                console.warn("[belldandy-memory] FTS5 not available (e.g. Node built-in sqlite). Keyword search will use LIKE fallback.");
+            }
+            else {
+                throw err;
+            }
+        }
     }
     /** 插入或更新 chunk */
     upsertChunk(chunk) {
@@ -111,43 +128,67 @@ export class MemoryStore {
         const result = stmt.run();
         return Number(result.changes);
     }
-    /** 关键词搜索 */
+    /** 关键词搜索（有 FTS5 用全文索引，否则用 LIKE 降级） */
     searchKeyword(query, limit = 10) {
         this.ensureOpen();
-        // 构建 FTS5 查询
-        const ftsQuery = buildFtsQuery(query);
-        if (!ftsQuery)
+        const tokens = tokenizeForSearch(query);
+        if (tokens.length === 0)
             return [];
-        try {
-            const stmt = this.db.prepare(`
-        SELECT
-          c.id, c.source_path, c.source_type, c.memory_type, c.start_line, c.end_line,
-          c.content, c.metadata,
-          bm25(chunks_fts) as rank
-        FROM chunks_fts f
-        JOIN chunks c ON c.rowid = f.rowid
-        WHERE chunks_fts MATCH ?
-        ORDER BY rank
-        LIMIT ?
-      `);
-            const rows = stmt.all(ftsQuery, limit);
-            return rows.map((row) => ({
-                id: row.id,
-                sourcePath: row.source_path,
-                sourceType: row.source_type,
-                memoryType: row.memory_type,
-                startLine: row.start_line ?? undefined,
-                endLine: row.end_line ?? undefined,
-                snippet: truncateContent(row.content, 500),
-                score: bm25RankToScore(row.rank),
-                metadata: safeParseJson(row.metadata),
-            }));
+        if (this.hasFts5) {
+            const ftsQuery = buildFtsQuery(query);
+            if (!ftsQuery)
+                return [];
+            try {
+                const stmt = this.db.prepare(`
+          SELECT
+            c.id, c.source_path, c.source_type, c.memory_type, c.start_line, c.end_line,
+            c.content, c.metadata,
+            bm25(chunks_fts) as rank
+          FROM chunks_fts f
+          JOIN chunks c ON c.rowid = f.rowid
+          WHERE chunks_fts MATCH ?
+          ORDER BY rank
+          LIMIT ?
+        `);
+                const rows = stmt.all(ftsQuery, limit);
+                return rows.map((row) => ({
+                    id: row.id,
+                    sourcePath: row.source_path,
+                    sourceType: row.source_type,
+                    memoryType: row.memory_type,
+                    startLine: row.start_line ?? undefined,
+                    endLine: row.end_line ?? undefined,
+                    snippet: truncateContent(row.content, 500),
+                    score: bm25RankToScore(row.rank),
+                    metadata: safeParseJson(row.metadata),
+                }));
+            }
+            catch (err) {
+                console.error("FTS query error:", err);
+                return [];
+            }
         }
-        catch (err) {
-            // FTS 查询语法错误时返回空结果
-            console.error("FTS query error:", err);
-            return [];
-        }
+        // 无 FTS5 时用 LIKE 降级（多词 AND，转义 % _ 避免通配符）
+        const likeConditions = tokens.map((t) => `content LIKE ? ESCAPE '\\'`).join(" AND ");
+        const likeArgs = tokens.map((t) => `%${escapeLike(t)}%`);
+        const stmt = this.db.prepare(`
+      SELECT id, source_path, source_type, memory_type, start_line, end_line, content, metadata
+      FROM chunks
+      WHERE ${likeConditions}
+      LIMIT ?
+    `);
+        const rows = stmt.all(...likeArgs, limit);
+        return rows.map((row) => ({
+            id: row.id,
+            sourcePath: row.source_path,
+            sourceType: row.source_type,
+            memoryType: row.memory_type,
+            startLine: row.start_line ?? undefined,
+            endLine: row.end_line ?? undefined,
+            snippet: truncateContent(row.content, 500),
+            score: 0.5,
+            metadata: safeParseJson(row.metadata),
+        }));
     }
     /** 获取文件元数据（用于增量检查） */
     getFileMetadata(sourcePath) {
@@ -391,9 +432,17 @@ export class MemoryStore {
         }
     }
 }
+/** 分词（FTS5 与 LIKE 共用） */
+function tokenizeForSearch(raw) {
+    return raw.match(/[A-Za-z0-9_\u4e00-\u9fa5]+/g)?.filter(Boolean) ?? [];
+}
+/** LIKE 模式中转义 % 和 _（配合 ESCAPE '\\'） */
+function escapeLike(s) {
+    return s.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
 /** 构建 FTS5 查询字符串 */
 function buildFtsQuery(raw) {
-    const tokens = raw.match(/[A-Za-z0-9_\u4e00-\u9fa5]+/g)?.filter(Boolean) ?? [];
+    const tokens = tokenizeForSearch(raw);
     if (tokens.length === 0)
         return null;
     return tokens.map((t) => `"${t.replace(/"/g, "")}"`).join(" AND ");

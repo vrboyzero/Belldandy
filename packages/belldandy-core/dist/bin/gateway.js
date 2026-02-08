@@ -2,13 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { OpenAIChatAgent, ToolEnabledAgent, ensureWorkspace, loadWorkspaceFiles, buildSystemPrompt, } from "@belldandy/agent";
-import { ToolExecutor, DEFAULT_POLICY, fetchTool, fileReadTool, fileWriteTool, fileDeleteTool, createMemorySearchTool, createMemoryGetTool, browserOpenTool, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserGetContentTool, cameraSnapTool, imageGenerateTool, textToSpeechTool, methodListTool, methodReadTool, methodCreateTool, methodSearchTool, } from "@belldandy/skills";
+import { ToolExecutor, DEFAULT_POLICY, fetchTool, applyPatchTool, fileReadTool, fileWriteTool, fileDeleteTool, listFilesTool, createMemorySearchTool, createMemoryGetTool, browserOpenTool, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserGetContentTool, cameraSnapTool, imageGenerateTool, textToSpeechTool, runCommandTool, methodListTool, methodReadTool, methodCreateTool, methodSearchTool, logReadTool, logSearchTool, } from "@belldandy/skills";
 import { MemoryStore, MemoryIndexer, listMemoryFiles, ensureMemoryDir } from "@belldandy/memory";
 import { RelayServer } from "@belldandy/browser";
 import { FeishuChannel } from "@belldandy/channels";
 import { startGatewayServer } from "../server.js";
 import { startHeartbeatRunner } from "../heartbeat/index.js";
 import { initMCPIntegration, registerMCPToolsToExecutor, printMCPStatus, } from "../mcp/index.js";
+import { createLoggerFromEnv } from "../logger/index.js";
 // --- Env Loading ---
 loadEnvFileIfExists(path.join(process.cwd(), ".env.local"));
 loadEnvFileIfExists(path.join(process.cwd(), ".env"));
@@ -66,6 +67,109 @@ const heartbeatActiveHoursRaw = readEnv("BELLDANDY_HEARTBEAT_ACTIVE_HOURS"); // 
 const defaultStateDir = path.join(os.homedir(), ".belldandy");
 const stateDir = readEnv("BELLDANDY_STATE_DIR") ?? defaultStateDir;
 const memoryDbPath = readEnv("BELLDANDY_MEMORY_DB") ?? path.join(stateDir, "memory.db");
+const extraWorkspaceRootsRaw = readEnv("BELLDANDY_EXTRA_WORKSPACE_ROOTS");
+const extraWorkspaceRoots = extraWorkspaceRootsRaw
+    ? extraWorkspaceRootsRaw
+        .split(",")
+        .map((p) => path.resolve(p.trim()))
+        .filter((p) => p.length > 0)
+    : undefined;
+// Logger（尽早初始化，后续所有输出走统一日志）
+const logger = createLoggerFromEnv(stateDir);
+function normalizeStringArray(input) {
+    if (!Array.isArray(input))
+        return undefined;
+    return input.map(v => String(v)).map(v => v.trim()).filter(Boolean);
+}
+function normalizeExecPolicy(input) {
+    if (!input || typeof input !== "object")
+        return undefined;
+    const obj = input;
+    return {
+        quickTimeoutMs: typeof obj.quickTimeoutMs === "number" ? obj.quickTimeoutMs : undefined,
+        longTimeoutMs: typeof obj.longTimeoutMs === "number" ? obj.longTimeoutMs : undefined,
+        quickCommands: normalizeStringArray(obj.quickCommands),
+        longCommands: normalizeStringArray(obj.longCommands),
+        extraSafelist: normalizeStringArray(obj.extraSafelist),
+        extraBlocklist: normalizeStringArray(obj.extraBlocklist),
+        nonInteractive: obj.nonInteractive && typeof obj.nonInteractive === "object"
+            ? {
+                enabled: typeof obj.nonInteractive.enabled === "boolean" ? obj.nonInteractive.enabled : undefined,
+                additionalFlags: normalizeStringArray(obj.nonInteractive.additionalFlags),
+                defaultFlags: normalizeStringArray(obj.nonInteractive.defaultFlags),
+                rules: obj.nonInteractive.rules && typeof obj.nonInteractive.rules === "object"
+                    ? obj.nonInteractive.rules
+                    : undefined,
+            }
+            : undefined,
+    };
+}
+function normalizeFileWritePolicy(input) {
+    if (!input || typeof input !== "object")
+        return undefined;
+    const obj = input;
+    return {
+        allowedExtensions: normalizeStringArray(obj.allowedExtensions),
+        allowDotFiles: typeof obj.allowDotFiles === "boolean" ? obj.allowDotFiles : undefined,
+        allowBinary: typeof obj.allowBinary === "boolean" ? obj.allowBinary : undefined,
+    };
+}
+function normalizeToolsPolicy(input) {
+    if (!input || typeof input !== "object")
+        return undefined;
+    const obj = input;
+    return {
+        allowedPaths: normalizeStringArray(obj.allowedPaths),
+        deniedPaths: normalizeStringArray(obj.deniedPaths),
+        allowedDomains: normalizeStringArray(obj.allowedDomains),
+        deniedDomains: normalizeStringArray(obj.deniedDomains),
+        maxTimeoutMs: typeof obj.maxTimeoutMs === "number" ? obj.maxTimeoutMs : undefined,
+        maxResponseBytes: typeof obj.maxResponseBytes === "number" ? obj.maxResponseBytes : undefined,
+        exec: normalizeExecPolicy(obj.exec),
+        fileWrite: normalizeFileWritePolicy(obj.fileWrite),
+    };
+}
+function mergePolicy(base, override) {
+    if (!override)
+        return base;
+    return {
+        ...base,
+        ...override,
+        exec: {
+            ...(base.exec ?? {}),
+            ...(override.exec ?? {}),
+            nonInteractive: {
+                ...(base.exec?.nonInteractive ?? {}),
+                ...(override.exec?.nonInteractive ?? {}),
+            },
+        },
+        fileWrite: {
+            ...(base.fileWrite ?? {}),
+            ...(override.fileWrite ?? {}),
+        },
+    };
+}
+function loadToolsPolicy(filePath, log) {
+    try {
+        const resolved = path.resolve(filePath);
+        const raw = fs.readFileSync(resolved, "utf-8");
+        const parsed = JSON.parse(raw);
+        const normalized = normalizeToolsPolicy(parsed);
+        if (!normalized) {
+            log.warn("tools", `BELLDANDY_TOOLS_POLICY_FILE is not a valid object: ${resolved}`);
+            return undefined;
+        }
+        log.info("tools", `Loaded tools policy from ${resolved}`);
+        return normalized;
+    }
+    catch (err) {
+        log.warn("tools", `Failed to load tools policy: ${String(err)}`);
+        return undefined;
+    }
+}
+const toolsPolicyFile = readEnv("BELLDANDY_TOOLS_POLICY_FILE");
+const toolsPolicyFromFile = toolsPolicyFile ? loadToolsPolicy(toolsPolicyFile, logger) : undefined;
+const toolsPolicy = mergePolicy(DEFAULT_POLICY, toolsPolicyFromFile);
 // Agent & Tools
 const agentProvider = (readEnv("BELLDANDY_AGENT_PROVIDER") ?? "mock");
 const openaiBaseUrl = readEnv("BELLDANDY_OPENAI_BASE_URL");
@@ -74,6 +178,8 @@ const openaiModel = readEnv("BELLDANDY_OPENAI_MODEL");
 const openaiStream = (readEnv("BELLDANDY_OPENAI_STREAM") ?? "true") !== "false";
 const openaiSystemPrompt = readEnv("BELLDANDY_OPENAI_SYSTEM_PROMPT");
 const toolsEnabled = (readEnv("BELLDANDY_TOOLS_ENABLED") ?? "false") === "true";
+const agentTimeoutMsRaw = readEnv("BELLDANDY_AGENT_TIMEOUT_MS");
+const agentTimeoutMs = agentTimeoutMsRaw ? Math.max(5000, parseInt(agentTimeoutMsRaw, 10) || 120_000) : undefined;
 // MCP
 const mcpEnabled = (readEnv("BELLDANDY_MCP_ENABLED") ?? "false") === "true";
 // --- Activity Tracking ---
@@ -104,10 +210,11 @@ if (agentProvider === "openai") {
   if (!openaiModel) throw new Error("BELLDANDY_AGENT_PROVIDER=openai requires BELLDANDY_OPENAI_MODEL");
 }
 */
-// Security Warning
+// Security Check: Reject unsafe configuration
 if ((host === "0.0.0.0" || host === "::") && authMode === "none") {
-    console.error("\n[SECURITY WARNING] Binding to all interfaces (0.0.0.0) without authentication!");
-    console.error("Anyone on your network can access this agent. Please set BELLDANDY_AUTH_MODE in .env.\n");
+    logger.error("gateway", "FATAL: Cannot bind to 0.0.0.0 with AUTH_MODE=none");
+    logger.error("gateway", "Set BELLDANDY_AUTH_MODE=token and BELLDANDY_AUTH_TOKEN in .env to enable public access");
+    process.exit(1);
 }
 // --- Initialization ---
 // 1. Ensure state dir exists
@@ -134,15 +241,21 @@ const memoryStore = new MemoryStore(memoryDbPath);
 // 2.5 Init Embedding Provider (configured via env for MemoryManager)
 const embeddingEnabled = readEnv("BELLDANDY_EMBEDDING_ENABLED") === "true";
 if (embeddingEnabled && !openaiApiKey) {
-    console.warn("Embedding: BELLDANDY_EMBEDDING_ENABLED=true but no OpenAI API key, skipping");
+    logger.warn("memory", "BELLDANDY_EMBEDDING_ENABLED=true but no OpenAI API key, skipping");
 }
+// [SECURITY] 危险工具需显式启用
+const dangerousToolsEnabled = readEnv("BELLDANDY_DANGEROUS_TOOLS_ENABLED") === "true";
 // 3. Init Executor (conditional)
 const toolsToRegister = toolsEnabled
     ? [
         fetchTool,
+        applyPatchTool,
         fileReadTool,
         fileWriteTool,
         fileDeleteTool,
+        listFilesTool,
+        // [SECURITY] runCommandTool 仅在显式启用时注册
+        ...(dangerousToolsEnabled ? [runCommandTool] : []),
         createMemorySearchTool(),
         createMemoryGetTool(),
         browserOpenTool,
@@ -158,58 +271,80 @@ const toolsToRegister = toolsEnabled
         methodReadTool,
         methodCreateTool,
         methodSearchTool,
+        logReadTool,
+        logSearchTool,
     ]
     : [];
 const toolExecutor = new ToolExecutor({
     tools: toolsToRegister,
     workspaceRoot: stateDir, // Use ~/.belldandy as the workspace root for file operations
-    policy: DEFAULT_POLICY, // TODO: Load from BELLDANDY_TOOLS_POLICY_FILE if needed
+    extraWorkspaceRoots, // 额外允许 file_read/file_write/file_delete 的根目录（如其他盘符）
+    policy: toolsPolicy,
+    auditLogger: (log) => {
+        const msg = log.success
+            ? `${log.toolName} completed in ${log.durationMs}ms`
+            : `${log.toolName} failed in ${log.durationMs}ms: ${log.error ?? "unknown"}`;
+        logger.info("tools", msg, { toolName: log.toolName, success: log.success, durationMs: log.durationMs });
+    },
+    logger: {
+        info: (m) => logger.info("tools", m),
+        warn: (m) => logger.warn("tools", m),
+        error: (m) => logger.error("tools", m),
+        debug: (m) => logger.debug("tools", m),
+    },
 });
 // 4. Log enabled tools
 if (toolsEnabled) {
-    console.log("Tools enabled: web_fetch, file_read, file_write, memory_search, memory_get, browser_*");
+    const safeTools = "web_fetch, apply_patch, file_read, file_write, file_delete, list_files, memory_search, memory_get, browser_*, log_read, log_search";
+    if (dangerousToolsEnabled) {
+        logger.warn("tools", "⚠️ DANGEROUS_TOOLS_ENABLED=true: run_command is active");
+        logger.info("tools", `Tools enabled: ${safeTools}, run_command`);
+    }
+    else {
+        logger.info("tools", `Tools enabled: ${safeTools}`);
+    }
 }
 // 4.1 Initialize MCP and register MCP tools
 if (mcpEnabled && toolsEnabled) {
     try {
-        console.log("[MCP] 正在初始化 MCP 支持...");
-        await initMCPIntegration();
+        logger.info("mcp", "正在初始化 MCP 支持...");
+        await initMCPIntegration(logger);
         const registeredCount = registerMCPToolsToExecutor(toolExecutor);
         if (registeredCount > 0) {
-            console.log(`[MCP] 已启用，注册了 ${registeredCount} 个 MCP 工具`);
+            logger.info("mcp", `已启用，注册了 ${registeredCount} 个 MCP 工具`);
         }
-        printMCPStatus();
+        printMCPStatus(logger);
     }
     catch (err) {
-        console.warn("[MCP] 初始化失败，MCP 工具将不可用:", err);
+        logger.warn("mcp", "初始化失败，MCP 工具将不可用", err);
     }
 }
 else if (mcpEnabled && !toolsEnabled) {
-    console.warn("[MCP] BELLDANDY_MCP_ENABLED=true 但 BELLDANDY_TOOLS_ENABLED=false，MCP 需要启用工具系统");
+    logger.warn("mcp", "BELLDANDY_MCP_ENABLED=true 但 BELLDANDY_TOOLS_ENABLED=false，MCP 需要启用工具系统");
 }
 // 4.5 Auto-index memory files (MEMORY.md + memory/*.md)
 await ensureMemoryDir(stateDir);
 const memoryFilesResult = await listMemoryFiles(stateDir);
 if (memoryFilesResult.files.length > 0) {
-    console.log(`Memory: found ${memoryFilesResult.files.length} files (MEMORY.md=${memoryFilesResult.hasMainMemory}, daily=${memoryFilesResult.dailyCount})`);
+    logger.info("memory", `found ${memoryFilesResult.files.length} files (MEMORY.md=${memoryFilesResult.hasMainMemory}, daily=${memoryFilesResult.dailyCount})`);
     // Index memory files
     const indexer = new MemoryIndexer(memoryStore);
     for (const file of memoryFilesResult.files) {
         await indexer.indexFile(file.absPath);
     }
-    console.log("Memory: files indexed");
+    logger.info("memory", "files indexed");
 }
 else {
-    console.log("Memory: no files found (run 'echo \"# Memory\" > ~/.belldandy/MEMORY.md' to create)");
+    logger.info("memory", "no files found (run 'echo \"# Memory\" > ~/.belldandy/MEMORY.md' to create)");
 }
 // 5. Init Workspace (SOUL/Persona)
 const workspaceResult = await ensureWorkspace({ dir: stateDir, createMissing: true });
 if (workspaceResult.created.length > 0) {
-    console.log(`Workspace: created ${workspaceResult.created.join(", ")}`);
+    logger.info("workspace", `created ${workspaceResult.created.join(", ")}`);
 }
 // 6. Load Workspace files for system prompt
 const workspace = await loadWorkspaceFiles(stateDir);
-console.log(`Workspace: SOUL=${workspace.hasSoul}, IDENTITY=${workspace.hasIdentity}, USER=${workspace.hasUser}, BOOTSTRAP=${workspace.hasBootstrap}`);
+logger.info("workspace", `SOUL=${workspace.hasSoul}, IDENTITY=${workspace.hasIdentity}, USER=${workspace.hasUser}, BOOTSTRAP=${workspace.hasBootstrap}`);
 // 7. Build dynamic system prompt
 const dynamicSystemPrompt = buildSystemPrompt({
     workspace,
@@ -244,6 +379,8 @@ Use the 'edge' provider by default for free, high-quality speech.`;
                 model: openaiModel,
                 systemPrompt: currentSystemPrompt,
                 toolExecutor: toolExecutor,
+                logger,
+                ...(agentTimeoutMs !== undefined && { timeoutMs: agentTimeoutMs }),
             });
         }
         return new OpenAIChatAgent({
@@ -263,45 +400,46 @@ const server = await startGatewayServer({
     stateDir,
     agentFactory: createAgent,
     onActivity,
+    logger,
 });
-console.log(`Belldandy Gateway running: http://${server.host}:${server.port}`);
-console.log(`WebChat: http://${server.host}:${server.port}/`);
-console.log(`WS: ws://${server.host}:${server.port}`);
+logger.info("gateway", `Belldandy Gateway running: http://${server.host}:${server.port}`);
+logger.info("gateway", `WebChat: http://${server.host}:${server.port}/`);
+logger.info("gateway", `WS: ws://${server.host}:${server.port}`);
 if (server.host === "0.0.0.0" || server.host === "::") {
     // Print LAN IPs for easier access from other machines
     const nets = os.networkInterfaces();
-    console.log("Network Interfaces (Public Access):");
+    logger.info("gateway", "Network Interfaces (Public Access):");
     for (const name of Object.keys(nets)) {
         for (const net of nets[name]) {
             // Skip over non-IPv4 and internal (i.e. 127.0.0.1) addresses
             if (net.family === 'IPv4' && !net.internal) {
-                console.log(`  -> http://${net.address}:${server.port}/`);
+                logger.info("gateway", `  -> http://${net.address}:${server.port}/`);
             }
         }
     }
 }
 else {
-    console.log(`Access restricted to local machine (${server.host}).`);
-    console.log(`To allow remote access, set BELLDANDY_HOST=0.0.0.0 in .env`);
+    logger.info("gateway", `Access restricted to local machine (${server.host}).`);
+    logger.info("gateway", "To allow remote access, set BELLDANDY_HOST=0.0.0.0 in .env");
 }
-console.log(`State Dir: ${stateDir}`);
-console.log(`Memory DB: ${memoryDbPath}`);
-console.log(`Tools Enabled: ${toolsEnabled}`);
+logger.info("gateway", `State Dir: ${stateDir}`);
+logger.info("gateway", `Memory DB: ${memoryDbPath}`);
+logger.info("gateway", `Tools Enabled: ${toolsEnabled}`);
 // 8.5 Auto Open Browser (Magic Link)
 const setupToken = readEnv("SETUP_TOKEN");
 const autoOpenBrowser = readEnv("AUTO_OPEN_BROWSER") === "true";
 if (autoOpenBrowser) {
     const openUrlHost = (server.host === "0.0.0.0" || server.host === "::") ? "localhost" : server.host;
     const targetUrl = `http://${openUrlHost}:${server.port}/${setupToken ? `?token=${setupToken}` : ""}`;
-    console.log(`Launcher: Opening browser at ${targetUrl}...`);
+    logger.info("launcher", `Opening browser at ${targetUrl}...`);
     // Dynamic import to avoid issues if 'open' is optional or ESM
     try {
         const { default: open } = await import("open");
         await open(targetUrl);
     }
     catch (err) {
-        console.error("Launcher: Failed to auto-open browser:", err);
-        console.log(`Please open manually: ${targetUrl}`);
+        logger.error("launcher", "Failed to auto-open browser", err);
+        logger.info("launcher", `Please open manually: ${targetUrl}`);
     }
 }
 // 9. Start Feishu Channel (if configured)
@@ -319,13 +457,13 @@ if (feishuAppId && feishuAppSecret && createAgent) {
                     if (fs.existsSync(statePath)) {
                         const data = JSON.parse(fs.readFileSync(statePath, "utf-8"));
                         if (data.lastChatId) {
-                            console.log(`Feishu: Loaded persisted chat ID: ${data.lastChatId}`);
+                            logger.info("feishu", `Loaded persisted chat ID: ${data.lastChatId}`);
                             return data.lastChatId;
                         }
                     }
                 }
                 catch (e) {
-                    console.error("Feishu: Failed to load state:", e);
+                    logger.error("feishu", "Failed to load state", e);
                 }
                 return undefined;
             })(),
@@ -334,24 +472,24 @@ if (feishuAppId && feishuAppSecret && createAgent) {
                     const statePath = path.join(stateDir, "feishu-state.json");
                     const data = { lastChatId: chatId, updatedAt: Date.now() };
                     fs.writeFileSync(statePath, JSON.stringify(data, null, 2), "utf-8");
-                    console.log(`Feishu: Persisted chat ID: ${chatId}`);
+                    logger.info("feishu", `Persisted chat ID: ${chatId}`);
                 }
                 catch (e) {
-                    console.error("Feishu: Failed to save state:", e);
+                    logger.error("feishu", "Failed to save state", e);
                 }
             },
         });
         // Do not await, start in background
         feishuChannel.start().catch((err) => {
-            console.error("Feishu Channel Error:", err);
+            logger.error("feishu", "Channel Error", err);
         });
     }
     catch (e) {
-        console.warn("Feishu: Agent creation failed (likely missing config), skipping Feishu startup.");
+        logger.warn("feishu", "Agent creation failed (likely missing config), skipping Feishu startup.");
     }
 }
 else if ((feishuAppId || feishuAppSecret) && !createAgent) {
-    console.warn("Feishu Channel: Credentials present but no Agent configured (provider not openai?), skipping.");
+    logger.warn("feishu", "Credentials present but no Agent configured (provider not openai?), skipping.");
 }
 // 10. Start Heartbeat Runner (if configured)
 function parseIntervalMs(raw) {
@@ -410,14 +548,14 @@ if (heartbeatEnabled && createAgent) {
             });
             // 2. Deliver to Feishu (if configured)
             if (feishuChannel) {
-                console.log(`[heartbeat] Delivering to user via Feishu...`);
+                logger.info("heartbeat", "Delivering to user via Feishu...");
                 const sent = await feishuChannel.sendProactiveMessage(message);
                 if (!sent) {
-                    console.warn(`[heartbeat] Failed to deliver: No active Feishu chat session (user needs to speak first).`);
+                    logger.warn("heartbeat", "Failed to deliver: No active Feishu chat session (user needs to speak first).");
                 }
             }
             else {
-                console.log(`[heartbeat] Broadcasted to local Web clients (Feishu disabled).`);
+                logger.info("heartbeat", "Broadcasted to local Web clients (Feishu disabled).");
             }
         };
         heartbeatRunner = startHeartbeatRunner({
@@ -428,16 +566,16 @@ if (heartbeatEnabled && createAgent) {
             activeHours,
             timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
             isBusy,
-            log: (msg) => console.log(msg),
+            log: (msg) => logger.info("heartbeat", msg),
         });
-        console.log(`Heartbeat: enabled (interval=${heartbeatIntervalRaw}, activeHours=${heartbeatActiveHoursRaw ?? "all"})`);
+        logger.info("heartbeat", `enabled (interval=${heartbeatIntervalRaw}, activeHours=${heartbeatActiveHoursRaw ?? "all"})`);
     }
     catch (e) {
-        console.warn("Heartbeat: Agent creation failed (likely missing config), skipping Heartbeat startup.");
+        logger.warn("heartbeat", "Agent creation failed (likely missing config), skipping Heartbeat startup.");
     }
 }
 else if (heartbeatEnabled && !createAgent) {
-    console.warn("Heartbeat: enabled but no Agent configured (provider not openai?), skipping.");
+    logger.warn("heartbeat", "enabled but no Agent configured (provider not openai?), skipping.");
 }
 // 11. Start Browser Relay (if configured)
 const browserRelayEnabled = readEnv("BELLDANDY_BROWSER_RELAY_ENABLED") === "true";
@@ -446,9 +584,9 @@ if (browserRelayEnabled) {
     const relay = new RelayServer(browserRelayPort);
     // Do not await, start in background
     relay.start().then(() => {
-        console.log(`Browser Relay: enabled (port=${browserRelayPort})`);
+        logger.info("browser-relay", `enabled (port=${browserRelayPort})`);
     }).catch((err) => {
-        console.error("Browser Relay Error:", err);
+        logger.error("browser-relay", "Relay Error", err);
     });
 }
 //# sourceMappingURL=gateway.js.map

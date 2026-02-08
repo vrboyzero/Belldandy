@@ -4,6 +4,7 @@
  * 将 MCP 服务器提供的工具桥接到 Belldandy 的工具系统中，
  * 使 Agent 能够调用外部 MCP 工具。
  */
+import { mcpLog } from "./logger-adapter.js";
 // ============================================================================
 // 工具桥接器类
 // ============================================================================
@@ -35,7 +36,7 @@ export class MCPToolBridge {
         for (const tool of tools) {
             this.bridgedTools.set(tool.bridgedName, tool);
         }
-        console.log(`[MCPToolBridge] 注册了 ${tools.length} 个工具`);
+        mcpLog("MCPToolBridge", `注册了 ${tools.length} 个工具`);
     }
     /**
      * 注销服务器的所有工具
@@ -52,7 +53,7 @@ export class MCPToolBridge {
         for (const name of toRemove) {
             this.bridgedTools.delete(name);
         }
-        console.log(`[MCPToolBridge] 注销了服务器 ${serverId} 的 ${toRemove.length} 个工具`);
+        mcpLog("MCPToolBridge", `注销了服务器 ${serverId} 的 ${toRemove.length} 个工具`);
     }
     /**
      * 注销所有工具
@@ -60,7 +61,7 @@ export class MCPToolBridge {
     unregisterAllTools() {
         const count = this.bridgedTools.size;
         this.bridgedTools.clear();
-        console.log(`[MCPToolBridge] 注销了全部 ${count} 个工具`);
+        mcpLog("MCPToolBridge", `注销了全部 ${count} 个工具`);
     }
     /**
      * 获取已桥接的工具数量

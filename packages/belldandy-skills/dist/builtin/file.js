@@ -23,6 +23,37 @@ function isSensitivePath(relativePath) {
     const lower = relativePath.toLowerCase();
     return SENSITIVE_PATTERNS.some(p => lower.includes(p));
 }
+/** 受保护文件（禁止修改/删除） */
+const PROTECTED_FILES = ["soul.md"];
+function isProtectedFile(relativePath) {
+    const normalized = relativePath.replace(/\\/g, "/").toLowerCase();
+    return PROTECTED_FILES.some(p => normalized === p || normalized.endsWith(`/${p}`));
+}
+function normalizeExtensions(values) {
+    if (!values || values.length === 0)
+        return [];
+    return values.map(v => v.trim().toLowerCase()).filter(Boolean);
+}
+function isDotFile(relativePath) {
+    const base = path.posix.basename(relativePath.replace(/\\/g, "/"));
+    return base.startsWith(".");
+}
+function isExtensionAllowed(relativePath, allowedExtensions) {
+    if (allowedExtensions.length === 0)
+        return true;
+    const normalized = relativePath.replace(/\\/g, "/").toLowerCase();
+    const base = path.posix.basename(normalized);
+    const ext = path.posix.extname(base);
+    return allowedExtensions.some((entry) => {
+        if (!entry)
+            return false;
+        const needle = entry.startsWith(".") ? entry : `.${entry}`;
+        if (entry.startsWith(".")) {
+            return entry === ext || entry === base;
+        }
+        return needle === ext || entry === base || needle === base;
+    });
+}
 /** 检查路径是否在黑名单中 */
 function isDeniedPath(relativePath, deniedPaths) {
     const normalized = relativePath.replace(/\\/g, "/").toLowerCase();
@@ -34,22 +65,42 @@ function isDeniedPath(relativePath, deniedPaths) {
     }
     return null;
 }
-/** 规范化并验证路径在工作区内 */
-function resolveAndValidatePath(relativePath, workspaceRoot) {
-    // 规范化相对路径
-    const normalized = relativePath.replace(/\\/g, "/");
-    // 禁止绝对路径
-    if (path.isAbsolute(normalized)) {
-        return { ok: false, error: "禁止使用绝对路径，请使用相对于工作区的路径" };
+/** 检查路径是否在指定根目录下（不越界） */
+function isUnderRoot(absolute, root) {
+    const resolvedRoot = path.resolve(root);
+    const rel = path.relative(resolvedRoot, absolute);
+    if (rel.startsWith("..") || path.isAbsolute(rel))
+        return { ok: false };
+    return { ok: true, relative: rel.replace(/\\/g, "/") };
+}
+/** 规范化并验证路径在工作区内（主工作区或 extraWorkspaceRoots 中的任一根目录下） */
+function resolveAndValidatePath(relativePath, workspaceRoot, extraWorkspaceRoots) {
+    const trimmed = (relativePath || "").trim();
+    if (!trimmed) {
+        return { ok: false, error: "路径不能为空" };
     }
-    // 解析为绝对路径
-    const absolute = path.resolve(workspaceRoot, normalized);
-    const resolvedRoot = path.resolve(workspaceRoot);
-    // 检查路径遍历
-    if (!absolute.startsWith(resolvedRoot + path.sep) && absolute !== resolvedRoot) {
-        return { ok: false, error: "路径越界：不允许访问工作区外的文件" };
+    const normalized = trimmed.replace(/\\/g, "/");
+    const mainRoot = path.resolve(workspaceRoot);
+    let absolute;
+    if (path.isAbsolute(normalized) || (trimmed.length >= 2 && /^[A-Za-z]:/.test(trimmed))) {
+        absolute = path.resolve(normalized);
     }
-    return { ok: true, absolute, relative: normalized };
+    else {
+        absolute = path.resolve(mainRoot, normalized);
+    }
+    const underMain = isUnderRoot(absolute, mainRoot);
+    if (underMain.ok) {
+        return { ok: true, absolute, relative: underMain.relative };
+    }
+    if (extraWorkspaceRoots?.length) {
+        for (const extra of extraWorkspaceRoots) {
+            const underExtra = isUnderRoot(absolute, path.resolve(extra));
+            if (underExtra.ok) {
+                return { ok: true, absolute, relative: underExtra.relative };
+            }
+        }
+    }
+    return { ok: false, error: "路径越界：不允许访问工作区外的文件" };
 }
 // ============ file_read 工具 ============
 export const fileReadTool = {
@@ -93,8 +144,8 @@ export const fileReadTool = {
         if (typeof pathArg !== "string" || !pathArg.trim()) {
             return makeError("参数错误：path 必须是非空字符串");
         }
-        // 路径验证
-        const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot);
+        // 路径验证（主工作区或 extraWorkspaceRoots）
+        const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot, context.extraWorkspaceRoots);
         if (!pathResult.ok) {
             return makeError(pathResult.error);
         }
@@ -178,14 +229,44 @@ export const fileWriteTool = {
                     type: "string",
                     description: "要写入的内容",
                 },
+                encoding: {
+                    type: "string",
+                    description: "内容编码（默认 utf-8；允许 base64 以写入二进制）",
+                    enum: ["utf-8", "base64"],
+                },
                 mode: {
                     type: "string",
                     description: "写入模式（默认 overwrite）",
-                    enum: ["overwrite", "append"],
+                    enum: ["overwrite", "append", "replace", "insert"],
                 },
                 createDirs: {
                     type: "boolean",
                     description: "是否自动创建父目录（默认 true）",
+                },
+                startLine: {
+                    type: "number",
+                    description: "替换起始行（1-based，仅 mode=replace 时生效）",
+                },
+                endLine: {
+                    type: "number",
+                    description: "替换结束行（1-based，仅 mode=replace 时生效）",
+                },
+                regex: {
+                    type: "string",
+                    description: "正则表达式（仅 mode=replace 时生效）",
+                },
+                regexFlags: {
+                    type: "string",
+                    description: "正则标记（如 g, i, m，仅 mode=replace 时生效）",
+                },
+                line: {
+                    type: "number",
+                    description: "插入行号（1-based，仅 mode=insert 时生效）",
+                },
+                position: {
+                    type: "string",
+                    description: "插入位置（默认 before，仅 mode=insert 时生效）",
+                    enum: ["before", "after"],
                 },
             },
             required: ["path", "content"],
@@ -212,12 +293,16 @@ export const fileWriteTool = {
         if (typeof content !== "string") {
             return makeError("参数错误：content 必须是字符串");
         }
-        // 路径验证
-        const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot);
+        // 路径验证（主工作区或 extraWorkspaceRoots）
+        const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot, context.extraWorkspaceRoots);
         if (!pathResult.ok) {
             return makeError(pathResult.error);
         }
         const { absolute, relative } = pathResult;
+        // 受保护文件（优先拦截）
+        if (isProtectedFile(relative)) {
+            return makeError("禁止修改 SOUL.md");
+        }
         // 黑名单检查
         const denied = isDeniedPath(relative, context.policy.deniedPaths);
         if (denied) {
@@ -240,30 +325,140 @@ export const fileWriteTool = {
                 return makeError(`路径不在写入白名单中。允许的路径：${allowedPaths.join(", ")}`);
             }
         }
+        const fileWritePolicy = context.policy.fileWrite ?? {};
+        const allowDotFiles = fileWritePolicy.allowDotFiles !== false;
+        const allowedExtensions = normalizeExtensions(fileWritePolicy.allowedExtensions);
+        if (!allowDotFiles && isDotFile(relative)) {
+            return makeError("禁止写入点文件");
+        }
+        if (!isExtensionAllowed(relative, allowedExtensions)) {
+            return makeError(`文件扩展名不在允许列表中：${allowedExtensions.join(", ")}`);
+        }
+        const encoding = args.encoding || "utf-8";
+        if (encoding === "base64" && fileWritePolicy.allowBinary !== true) {
+            return makeError("禁止写入二进制内容（base64）");
+        }
         // 写入文件
         const mode = args.mode || "overwrite";
         const createDirs = args.createDirs !== false; // 默认 true
+        const applyExecutableBit = async () => {
+            const ext = path.posix.extname(relative.replace(/\\/g, "/")).toLowerCase();
+            if (process.platform !== "win32" && ext === ".sh") {
+                await fs.chmod(absolute, 0o755);
+            }
+        };
+        const readExistingText = async () => {
+            const raw = await fs.readFile(absolute, "utf-8");
+            const newline = raw.includes("\r\n") ? "\r\n" : "\n";
+            return { text: raw, newline };
+        };
         try {
             // 创建父目录
             if (createDirs) {
                 await fs.mkdir(path.dirname(absolute), { recursive: true });
             }
+            if (mode === "replace" || mode === "insert") {
+                if (encoding !== "utf-8") {
+                    return makeError("replace/insert 仅支持 utf-8 编码");
+                }
+                const existingStat = await fs.stat(absolute).catch(() => null);
+                if (!existingStat || !existingStat.isFile()) {
+                    return makeError(`文件不存在：${relative}`);
+                }
+                const { text, newline } = await readExistingText();
+                const lines = text.split(/\r?\n/);
+                if (mode === "replace") {
+                    const regex = args.regex;
+                    if (regex && regex.trim()) {
+                        const flags = args.regexFlags ?? "g";
+                        const re = new RegExp(regex, flags);
+                        if (!re.test(text)) {
+                            return makeError("未匹配到正则内容，未做替换");
+                        }
+                        const next = text.replace(re, content);
+                        await fs.writeFile(absolute, next, "utf-8");
+                    }
+                    else {
+                        const startLine = Number(args.startLine);
+                        const endLine = Number(args.endLine ?? args.startLine);
+                        if (!Number.isInteger(startLine) || startLine <= 0) {
+                            return makeError("startLine 必须是正整数");
+                        }
+                        if (!Number.isInteger(endLine) || endLine < startLine) {
+                            return makeError("endLine 必须 >= startLine");
+                        }
+                        const startIdx = startLine - 1;
+                        const endIdx = endLine - 1;
+                        if (startIdx >= lines.length || endIdx >= lines.length) {
+                            return makeError("行号越界");
+                        }
+                        const insertLines = content.split(/\r?\n/);
+                        lines.splice(startIdx, endIdx - startIdx + 1, ...insertLines);
+                        const next = lines.join(newline);
+                        await fs.writeFile(absolute, next, "utf-8");
+                    }
+                }
+                else {
+                    const line = Number(args.line);
+                    const position = args.position ?? "before";
+                    if (!Number.isInteger(line) || line <= 0) {
+                        return makeError("line 必须是正整数");
+                    }
+                    const index = position === "after" ? line : line - 1;
+                    if (index < 0 || index > lines.length) {
+                        return makeError("插入行号越界");
+                    }
+                    const insertLines = content.split(/\r?\n/);
+                    lines.splice(index, 0, ...insertLines);
+                    const next = lines.join(newline);
+                    await fs.writeFile(absolute, next, "utf-8");
+                }
+                await applyExecutableBit();
+                const updatedStat = await fs.stat(absolute);
+                return {
+                    id,
+                    name,
+                    success: true,
+                    output: JSON.stringify({
+                        path: relative,
+                        bytesWritten: Buffer.byteLength(content, "utf-8"),
+                        mode,
+                        encoding,
+                        totalSize: updatedStat.size,
+                    }),
+                    durationMs: Date.now() - start,
+                };
+            }
+            const writeBuffer = encoding === "base64" ? Buffer.from(content, "base64") : null;
             if (mode === "append") {
-                await fs.appendFile(absolute, content, "utf-8");
+                if (writeBuffer) {
+                    await fs.appendFile(absolute, writeBuffer);
+                }
+                else {
+                    await fs.appendFile(absolute, content, "utf-8");
+                }
             }
             else {
-                await fs.writeFile(absolute, content, "utf-8");
+                if (writeBuffer) {
+                    await fs.writeFile(absolute, writeBuffer);
+                }
+                else {
+                    await fs.writeFile(absolute, content, "utf-8");
+                }
             }
-            const stat = await fs.stat(absolute);
+            await applyExecutableBit();
+            const finalStat = await fs.stat(absolute);
+            const bytesWritten = writeBuffer ? writeBuffer.length : Buffer.byteLength(content, "utf-8");
             return {
                 id,
                 name,
                 success: true,
                 output: JSON.stringify({
                     path: relative,
-                    bytesWritten: Buffer.byteLength(content, "utf-8"),
+                    bytesWritten,
                     mode,
-                    totalSize: stat.size,
+                    encoding,
+                    totalSize: finalStat.size,
                 }),
                 durationMs: Date.now() - start,
             };
@@ -284,13 +479,13 @@ export const fileWriteTool = {
 export const fileDeleteTool = {
     definition: {
         name: "file_delete",
-        description: "删除工作区内的文件。路径必须是相对于工作区根目录的相对路径，禁止删除敏感文件（如 .env）。",
+        description: "删除工作区内的文件。path 可为相对路径（如 BOOTSTRAP.md）或工作区内的绝对路径；禁止删除敏感文件（如 .env）。",
         parameters: {
             type: "object",
             properties: {
                 path: {
                     type: "string",
-                    description: "相对于工作区根目录的文件路径",
+                    description: "文件路径：相对工作区根（如 BOOTSTRAP.md）或工作区内的绝对路径",
                 },
             },
             required: ["path"],
@@ -313,12 +508,16 @@ export const fileDeleteTool = {
         if (typeof pathArg !== "string" || !pathArg.trim()) {
             return makeError("参数错误：path 必须是非空字符串");
         }
-        // 路径验证
-        const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot);
+        // 路径验证（主工作区或 extraWorkspaceRoots）
+        const pathResult = resolveAndValidatePath(pathArg, context.workspaceRoot, context.extraWorkspaceRoots);
         if (!pathResult.ok) {
             return makeError(pathResult.error);
         }
         const { relative } = pathResult;
+        // 受保护文件（优先拦截）
+        if (isProtectedFile(relative)) {
+            return makeError("禁止删除 SOUL.md");
+        }
         // 黑名单检查
         const denied = isDeniedPath(relative, context.policy.deniedPaths);
         if (denied) {

@@ -117,13 +117,49 @@ async function readJson(filePath, fallback) {
         return fallback;
     }
 }
+const RENAME_RETRIES = 3;
+const RENAME_RETRY_DELAY_MS = 50;
+function delay(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
 async function writeJson(filePath, value) {
     const dir = path.dirname(filePath);
     await fs.promises.mkdir(dir, { recursive: true, mode: 0o700 });
     const tmp = path.join(dir, `${path.basename(filePath)}.${crypto.randomUUID()}.tmp`);
-    await fs.promises.writeFile(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf-8");
-    await fs.promises.chmod(tmp, 0o600);
-    await fs.promises.rename(tmp, filePath);
+    const content = `${JSON.stringify(value, null, 2)}\n`;
+    await fs.promises.writeFile(tmp, content, "utf-8");
+    try {
+        await fs.promises.chmod(tmp, 0o600);
+    }
+    catch {
+        /* Windows 可能不支持 chmod，忽略 */
+    }
+    let lastErr = null;
+    for (let i = 0; i < RENAME_RETRIES; i++) {
+        try {
+            await fs.promises.rename(tmp, filePath);
+            return;
+        }
+        catch (err) {
+            lastErr = err;
+            if (i < RENAME_RETRIES - 1)
+                await delay(RENAME_RETRY_DELAY_MS);
+        }
+    }
+    // Windows 上 rename 常因占用/权限报 EPERM，降级为直接写目标文件
+    if (process.platform === "win32" && lastErr && (lastErr.code === "EPERM" || lastErr.code === "EBUSY")) {
+        try {
+            await fs.promises.writeFile(filePath, content, "utf-8");
+            await fs.promises.unlink(tmp).catch(() => { });
+            return;
+        }
+        catch (fallbackErr) {
+            await fs.promises.unlink(tmp).catch(() => { });
+            throw fallbackErr;
+        }
+    }
+    await fs.promises.unlink(tmp).catch(() => { });
+    throw lastErr;
 }
 function randomCode() {
     let out = "";

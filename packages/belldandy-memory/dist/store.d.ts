@@ -4,6 +4,8 @@ export declare class MemoryStore {
     private db;
     private closed;
     private vecDims;
+    /** 当前 SQLite 是否支持 FTS5（Node 内置 node:sqlite 常不包含，会降级为 LIKE 搜索） */
+    private hasFts5;
     constructor(dbPath: string);
     /** 插入或更新 chunk */
     upsertChunk(chunk: MemoryChunk): void;
@@ -11,7 +13,7 @@ export declare class MemoryStore {
     deleteBySource(sourcePath: string): number;
     /** 删除所有 chunks */
     deleteAll(): number;
-    /** 关键词搜索 */
+    /** 关键词搜索（有 FTS5 用全文索引，否则用 LIKE 降级） */
     searchKeyword(query: string, limit?: number): MemorySearchResult[];
     /** 获取文件元数据（用于增量检查） */
     getFileMetadata(sourcePath: string): {

@@ -121,9 +121,9 @@ const memoryDbPath = readEnv("BELLDANDY_MEMORY_DB") ?? path.join(stateDir, "memo
 const extraWorkspaceRootsRaw = readEnv("BELLDANDY_EXTRA_WORKSPACE_ROOTS");
 const extraWorkspaceRoots = extraWorkspaceRootsRaw
   ? extraWorkspaceRootsRaw
-      .split(",")
-      .map((p) => path.resolve(p.trim()))
-      .filter((p) => p.length > 0)
+    .split(",")
+    .map((p) => path.resolve(p.trim()))
+    .filter((p) => p.length > 0)
   : undefined;
 
 // Logger（尽早初始化，后续所有输出走统一日志）
@@ -278,10 +278,11 @@ if (agentProvider === "openai") {
 }
 */
 
-// Security Warning
+// Security Check: Reject unsafe configuration
 if ((host === "0.0.0.0" || host === "::") && authMode === "none") {
-  logger.error("gateway", "Binding to all interfaces (0.0.0.0) without authentication!");
-  logger.error("gateway", "Anyone on your network can access this agent. Please set BELLDANDY_AUTH_MODE in .env.");
+  logger.error("gateway", "FATAL: Cannot bind to 0.0.0.0 with AUTH_MODE=none");
+  logger.error("gateway", "Set BELLDANDY_AUTH_MODE=token and BELLDANDY_AUTH_TOKEN in .env to enable public access");
+  process.exit(1);
 }
 
 // --- Initialization ---
@@ -314,6 +315,9 @@ if (embeddingEnabled && !openaiApiKey) {
   logger.warn("memory", "BELLDANDY_EMBEDDING_ENABLED=true but no OpenAI API key, skipping");
 }
 
+// [SECURITY] 危险工具需显式启用
+const dangerousToolsEnabled = readEnv("BELLDANDY_DANGEROUS_TOOLS_ENABLED") === "true";
+
 // 3. Init Executor (conditional)
 const toolsToRegister = toolsEnabled
   ? [
@@ -323,7 +327,8 @@ const toolsToRegister = toolsEnabled
     fileWriteTool,
     fileDeleteTool,
     listFilesTool,
-    runCommandTool,
+    // [SECURITY] runCommandTool 仅在显式启用时注册
+    ...(dangerousToolsEnabled ? [runCommandTool] : []),
 
     createMemorySearchTool(),
 
@@ -369,9 +374,13 @@ const toolExecutor = new ToolExecutor({
 
 // 4. Log enabled tools
 if (toolsEnabled) {
-  logger.info("tools", "Tools enabled: web_fetch, apply_patch, file_read, file_write, file_delete, list_files, run_command, memory_search, memory_get, browser_*, log_read, log_search");
-
-
+  const safeTools = "web_fetch, apply_patch, file_read, file_write, file_delete, list_files, memory_search, memory_get, browser_*, log_read, log_search";
+  if (dangerousToolsEnabled) {
+    logger.warn("tools", "⚠️ DANGEROUS_TOOLS_ENABLED=true: run_command is active");
+    logger.info("tools", `Tools enabled: ${safeTools}, run_command`);
+  } else {
+    logger.info("tools", `Tools enabled: ${safeTools}`);
+  }
 }
 
 // 4.1 Initialize MCP and register MCP tools

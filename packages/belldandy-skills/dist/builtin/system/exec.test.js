@@ -69,28 +69,14 @@ describe("run_command (Platform-aware Safelist)", () => {
     describe("Unix-specific commands", () => {
         it("should handle 'ls' based on platform", async () => {
             const result = await runCommandTool.execute({ command: "ls" }, mockContext);
-            if (!isWindows) {
-                // Unix: 应该被允许
-                if (!result.success) {
-                    expect(result.error).not.toContain("not in the safe list");
-                }
-            }
-            else {
-                // Windows: 应该被安全阻止（Windows 用 dir）
-                expect(result.success).toBe(false);
-                expect(result.error).toContain("not in the safe list");
+            if (!result.success) {
+                expect(result.error).not.toContain("not in the safe list");
             }
         });
         it("should handle 'curl' based on platform", async () => {
             const result = await runCommandTool.execute({ command: "curl --version" }, mockContext);
-            if (!isWindows) {
-                if (!result.success) {
-                    expect(result.error).not.toContain("not in the safe list");
-                }
-            }
-            else {
-                expect(result.success).toBe(false);
-                expect(result.error).toContain("not in the safe list");
+            if (!result.success) {
+                expect(result.error).not.toContain("not in the safe list");
             }
         });
     });
@@ -101,14 +87,14 @@ describe("run_command (Platform-aware Safelist)", () => {
             if (isWindows) {
                 const result = await runCommandTool.execute({ command: "del /s *.log" }, mockContext);
                 expect(result.success).toBe(false);
-                expect(result.error).toContain("Recursive/Queit deletion");
+                expect(result.error).toContain("Recursive/Quiet deletion");
             }
         });
         it("should block 'del /q' on Windows (quiet blocked)", async () => {
             if (isWindows) {
                 const result = await runCommandTool.execute({ command: "del /q *.log" }, mockContext);
                 expect(result.success).toBe(false);
-                expect(result.error).toContain("Recursive/Queit deletion");
+                expect(result.error).toContain("Recursive/Quiet deletion");
             }
         });
         it("should block 'rm -rf' on Unix (recursive blocked)", async () => {

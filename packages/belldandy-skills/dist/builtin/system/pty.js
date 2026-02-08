@@ -63,9 +63,9 @@ export class PtyManager {
     async createSession(cmd, args = [], opt = {}) {
         await this.loadNodePty();
         const id = Math.random().toString(36).substring(7);
-        // 跨平台 shell 选择：Windows -> PowerShell, macOS/Linux -> 用户默认 shell 或 bash
+        // 跨平台 shell 选择。Windows 默认用 cmd.exe 避免安全软件对「PowerShell 命令执行」的误报；需 PowerShell 时可传 cmd="powershell.exe"
         const shell = cmd || (os.platform() === "win32"
-            ? "powershell.exe"
+            ? "cmd.exe"
             : (process.env.SHELL || "/bin/bash"));
         const env = Object.assign({}, process.env, opt.env);
         const cwd = opt.cwd || process.cwd();

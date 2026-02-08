@@ -8,6 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { isStdioTransport, isSSETransport, } from "./types.js";
+import { mcpLog, mcpWarn, mcpError } from "./logger-adapter.js";
 // ============================================================================
 // MCP 客户端类
 // ============================================================================
@@ -78,7 +79,7 @@ export class MCPClient {
      */
     async connect() {
         if (this.status === "connected" || this.status === "connecting") {
-            console.log(`[MCP:${this.config.id}] 已连接或正在连接中，跳过`);
+            mcpLog(`mcp:${this.config.id}`, "已连接或正在连接中，跳过");
             return;
         }
         this.setStatus("connecting");
@@ -108,13 +109,13 @@ export class MCPClient {
             this.connectedAt = new Date();
             this.reconnectCount = 0;
             this.setStatus("connected");
-            console.log(`[MCP:${this.config.id}] 已连接到服务器 ${this.metadata.serverName || "unknown"}`);
-            console.log(`[MCP:${this.config.id}] 发现 ${this.tools.length} 个工具, ${this.resources.length} 个资源`);
+            mcpLog(`mcp:${this.config.id}`, `已连接到服务器 ${this.metadata.serverName || "unknown"}`);
+            mcpLog(`mcp:${this.config.id}`, `发现 ${this.tools.length} 个工具, ${this.resources.length} 个资源`);
         }
         catch (err) {
             this.error = err instanceof Error ? err.message : String(err);
             this.setStatus("error");
-            console.error(`[MCP:${this.config.id}] 连接失败: ${this.error}`);
+            mcpError(`mcp:${this.config.id}`, `连接失败: ${this.error}`);
             // 清理资源
             await this.cleanup();
             throw err;
@@ -127,24 +128,24 @@ export class MCPClient {
         if (this.status === "disconnected") {
             return;
         }
-        console.log(`[MCP:${this.config.id}] 正在断开连接...`);
+        mcpLog(`mcp:${this.config.id}`, "正在断开连接...");
         await this.cleanup();
         this.setStatus("disconnected");
-        console.log(`[MCP:${this.config.id}] 已断开连接`);
+        mcpLog(`mcp:${this.config.id}`, "已断开连接");
     }
     /**
      * 重新连接
      */
     async reconnect() {
         if (this.reconnectCount >= (this.config.retryCount ?? 3)) {
-            console.error(`[MCP:${this.config.id}] 已达到最大重试次数`);
+            mcpError(`mcp:${this.config.id}`, "已达到最大重试次数");
             this.setStatus("error");
             this.error = "重连失败：已达到最大重试次数";
             return;
         }
         this.reconnectCount++;
         this.setStatus("reconnecting");
-        console.log(`[MCP:${this.config.id}] 正在重连 (${this.reconnectCount}/${this.config.retryCount ?? 3})...`);
+        mcpLog(`mcp:${this.config.id}`, `正在重连 (${this.reconnectCount}/${this.config.retryCount ?? 3})...`);
         // 等待重试间隔
         const delay = this.config.retryDelay ?? 1000;
         await new Promise((resolve) => setTimeout(resolve, delay));
@@ -173,7 +174,7 @@ export class MCPClient {
             };
         }
         try {
-            console.log(`[MCP:${this.config.id}] 调用工具: ${toolName}`);
+            mcpLog(`mcp:${this.config.id}`, `调用工具: ${toolName}`);
             const result = await this.client.callTool({
                 name: toolName,
                 arguments: args,
@@ -209,7 +210,7 @@ export class MCPClient {
         }
         catch (err) {
             const errorMessage = err instanceof Error ? err.message : String(err);
-            console.error(`[MCP:${this.config.id}] 工具调用失败: ${errorMessage}`);
+            mcpError(`mcp:${this.config.id}`, `工具调用失败: ${errorMessage}`);
             return {
                 success: false,
                 error: errorMessage,
@@ -227,7 +228,7 @@ export class MCPClient {
         if (!this.client || this.status !== "connected") {
             throw new Error("MCP 服务器未连接");
         }
-        console.log(`[MCP:${this.config.id}] 读取资源: ${uri}`);
+        mcpLog(`mcp:${this.config.id}`, `读取资源: ${uri}`);
         const result = await this.client.readResource({ uri });
         return {
             contents: result.contents.map((content) => ({
@@ -283,7 +284,7 @@ export class MCPClient {
      * 创建 stdio 传输层
      */
     createStdioTransport(config) {
-        console.log(`[MCP:${this.config.id}] 创建 stdio 传输: ${config.command} ${(config.args || []).join(" ")}`);
+        mcpLog(`mcp:${this.config.id}`, `创建 stdio 传输: ${config.command} ${(config.args || []).join(" ")}`);
         // 使用 cross-spawn 创建子进程，支持跨平台
         const transport = new StdioClientTransport({
             command: config.command,
@@ -298,7 +299,7 @@ export class MCPClient {
      * 创建 SSE 传输层
      */
     createSSETransport(config) {
-        console.log(`[MCP:${this.config.id}] 创建 SSE 传输: ${config.url}`);
+        mcpLog(`mcp:${this.config.id}`, `创建 SSE 传输: ${config.url}`);
         const transport = new SSEClientTransport(new URL(config.url), {
             requestInit: config.headers
                 ? { headers: config.headers }
@@ -324,7 +325,7 @@ export class MCPClient {
             }));
         }
         catch (err) {
-            console.warn(`[MCP:${this.config.id}] 无法列出工具:`, err);
+            mcpWarn(`mcp:${this.config.id}`, "无法列出工具", err);
             this.tools = [];
         }
         // 发现资源
@@ -339,7 +340,7 @@ export class MCPClient {
             }));
         }
         catch (err) {
-            console.warn(`[MCP:${this.config.id}] 无法列出资源:`, err);
+            mcpWarn(`mcp:${this.config.id}`, "无法列出资源", err);
             this.resources = [];
         }
     }
@@ -364,7 +365,7 @@ export class MCPClient {
                 await this.client.close();
             }
             catch (err) {
-                console.warn(`[MCP:${this.config.id}] 关闭客户端时出错:`, err);
+                mcpWarn(`mcp:${this.config.id}`, "关闭客户端时出错", err);
             }
             this.client = null;
         }
@@ -374,7 +375,7 @@ export class MCPClient {
                 await this.transport.close();
             }
             catch (err) {
-                console.warn(`[MCP:${this.config.id}] 关闭传输时出错:`, err);
+                mcpWarn(`mcp:${this.config.id}`, "关闭传输时出错", err);
             }
             this.transport = null;
         }
@@ -384,7 +385,7 @@ export class MCPClient {
                 this.childProcess.kill();
             }
             catch (err) {
-                console.warn(`[MCP:${this.config.id}] 终止子进程时出错:`, err);
+                mcpWarn(`mcp:${this.config.id}`, "终止子进程时出错", err);
             }
             this.childProcess = null;
         }
@@ -429,7 +430,7 @@ export class MCPClient {
                 listener(event);
             }
             catch (err) {
-                console.error(`[MCP:${this.config.id}] 事件监听器错误:`, err);
+                mcpError(`mcp:${this.config.id}`, "事件监听器错误", err);
             }
         }
     }

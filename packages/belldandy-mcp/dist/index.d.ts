@@ -28,6 +28,7 @@
  */
 export type { MCPTransportType, MCPStdioConfig, MCPSSEConfig, MCPServerConfig, MCPConfig, MCPServerStatus, MCPServerState, MCPToolInfo, MCPResourceInfo, MCPToolCallRequest, MCPToolCallResult, MCPResourceReadRequest, MCPResourceReadResult, MCPEventType, MCPEvent, MCPEventListener, MCPManager as IMCPManager, BelldandyToolDefinition, } from "./types.js";
 export { isStdioTransport, isSSETransport, DEFAULT_MCP_CONFIG, DEFAULT_SERVER_CONFIG, } from "./types.js";
+export { setMCPLogger } from "./logger-adapter.js";
 export { loadConfig, saveConfig, createDefaultConfig, configExists, addServer, removeServer, updateServer, getServer, getEnabledServers, getAutoConnectServers, BELLDANDY_DIR, MCP_CONFIG_PATH, } from "./config.js";
 export { MCPClient } from "./client.js";
 export { MCPToolBridge, toOpenAIFunction, toAnthropicTool, toOpenAIFunctions, toAnthropicTools, } from "./tool-bridge.js";

@@ -18,6 +18,10 @@ export type ToolEnabledAgentOptions = {
     hooks?: AgentHooks;
     /** 新版钩子运行器（推荐使用） */
     hookRunner?: HookRunner;
+    /** 可选：统一 Logger，用于钩子失败等日志 */
+    logger?: {
+        error(module: string, msg: string, data?: unknown): void;
+    };
 };
 export declare class ToolEnabledAgent implements BelldandyAgent {
     private readonly opts;

@@ -32,16 +32,16 @@ export const cameraSnapTool = {
             // 1. 检查是否已经在镜像页面，如果不在则导航
             const port = process.env.BELLDANDY_PORT || "28889";
             const targetUrl = `http://127.0.0.1:${port}${mirrorPath}`;
-            console.log(`[camera_snap] 正在导航至 ${targetUrl}...`);
+            (context.logger?.info ?? console.log)(`[camera_snap] 正在导航至 ${targetUrl}...`);
             // 强制转换以调用 execute (browser tools 使用的是 class based 还是 object based? )
             // 让我们检查一下 browserNavigateTool 的真实类型。
             // 假设它们也是符合 Tool 接口的对象。
             await browserNavigateTool.execute({ url: targetUrl }, context);
             // 2. 等待摄像头预热
-            console.log(`[camera_snap] 等待 ${delayMs}ms 以进行摄像头预热...`);
+            (context.logger?.info ?? console.log)(`[camera_snap] 等待 ${delayMs}ms 以进行摄像头预热...`);
             await new Promise(resolve => setTimeout(resolve, delayMs));
             // 3. 截图
-            console.log(`[camera_snap] 正在截图...`);
+            (context.logger?.info ?? console.log)(`[camera_snap] 正在截图...`);
             const screenshotResult = await browserScreenshotTool.execute({}, context);
             // 解析截图结果（假设 screenshotResult.output 是 JSON 字符串或直接包含了 image artifact）
             // ToolCallResult 的 output 通常是字符串。我们需要确认 browserScreenshotTool 返回什么。

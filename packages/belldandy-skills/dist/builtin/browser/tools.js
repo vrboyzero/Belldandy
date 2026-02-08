@@ -3,6 +3,36 @@ import path from "node:path";
 // Relay Server runs on port 28892 by default
 const RELAY_WS_ENDPOINT = "ws://127.0.0.1:28892/cdp";
 import { SNAPSHOT_SCRIPT } from "./snapshot.js";
+// [SECURITY] 域名控制（双模式）
+const ALLOWED_DOMAINS_RAW = process.env.BELLDANDY_BROWSER_ALLOWED_DOMAINS;
+const DENIED_DOMAINS_RAW = process.env.BELLDANDY_BROWSER_DENIED_DOMAINS;
+const ALLOWED_DOMAINS = ALLOWED_DOMAINS_RAW?.split(",").map(d => d.trim().toLowerCase()).filter(Boolean) || [];
+const DENIED_DOMAINS = DENIED_DOMAINS_RAW?.split(",").map(d => d.trim().toLowerCase()).filter(Boolean) || [];
+function validateBrowserUrl(urlStr) {
+    let url;
+    try {
+        url = new URL(urlStr);
+    }
+    catch {
+        return { ok: false, error: `无效的 URL: ${urlStr}` };
+    }
+    const hostname = url.hostname.toLowerCase();
+    // 黑名单检查（优先级最高）
+    if (DENIED_DOMAINS.length > 0) {
+        const denied = DENIED_DOMAINS.find(d => hostname === d || hostname.endsWith(`.${d}`));
+        if (denied) {
+            return { ok: false, error: `域名被禁止: ${hostname}` };
+        }
+    }
+    // 白名单检查（仅在配置了白名单时生效）
+    if (ALLOWED_DOMAINS.length > 0) {
+        const allowed = ALLOWED_DOMAINS.some(d => hostname === d || hostname.endsWith(`.${d}`));
+        if (!allowed) {
+            return { ok: false, error: `域名不在白名单中: ${hostname}` };
+        }
+    }
+    return { ok: true };
+}
 class BrowserManager {
     static instance;
     browser = null;
@@ -112,6 +142,11 @@ export const browserOpenTool = {
         const start = Date.now();
         try {
             const url = args.url;
+            // [SECURITY] 域名校验
+            const validation = validateBrowserUrl(url);
+            if (!validation.ok) {
+                return failure("unknown", "browser_open", validation.error, start);
+            }
             const manager = BrowserManager.getInstance();
             const page = await manager.getPage();
             // Navigate
@@ -140,6 +175,11 @@ export const browserNavigateTool = {
         const start = Date.now();
         try {
             const url = args.url;
+            // [SECURITY] 域名校验
+            const validation = validateBrowserUrl(url);
+            if (!validation.ok) {
+                return failure("unknown", "browser_navigate", validation.error, start);
+            }
             const manager = BrowserManager.getInstance();
             const page = await manager.getPage();
             await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });

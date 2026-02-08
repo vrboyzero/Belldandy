@@ -4,7 +4,7 @@
  * 提供 MCP 管理器的初始化和工具注册功能，
  * 将 MCP 工具桥接到 Belldandy 的工具系统中。
  */
-import { initializeMCP, shutdownMCP, } from "@belldandy/mcp";
+import { setMCPLogger, initializeMCP, shutdownMCP, } from "@belldandy/mcp";
 /** 全局集成状态 */
 const state = {
     initialized: false,
@@ -61,24 +61,28 @@ function mcpToolToTool(mcpTool, callTool) {
 /**
  * 初始化 MCP 集成
  *
+ * @param logger 可选，统一 Logger。传入后 MCP 模块的日志将写入文件
  * @returns MCP 管理器实例
  */
-export async function initMCPIntegration() {
+export async function initMCPIntegration(logger) {
+    if (logger) {
+        setMCPLogger(logger);
+    }
     if (state.initialized && state.manager) {
-        console.log("[MCP Integration] 已经初始化，返回现有实例");
+        logger ? logger.info("mcp", "已经初始化，返回现有实例") : console.log("[MCP Integration] 已经初始化，返回现有实例");
         return state.manager;
     }
-    console.log("[MCP Integration] 正在初始化...");
+    logger ? logger.info("mcp", "正在初始化...") : console.log("[MCP Integration] 正在初始化...");
     try {
         const manager = await initializeMCP();
         state.manager = manager;
         state.initialized = true;
         state.toolCount = manager.getAllTools().length;
-        console.log(`[MCP Integration] 初始化完成，共 ${state.toolCount} 个 MCP 工具可用`);
+        logger ? logger.info("mcp", `初始化完成，共 ${state.toolCount} 个 MCP 工具可用`) : console.log(`[MCP Integration] 初始化完成，共 ${state.toolCount} 个 MCP 工具可用`);
         return manager;
     }
     catch (error) {
-        console.error("[MCP Integration] 初始化失败:", error);
+        logger ? logger.error("mcp", "初始化失败", error) : console.error("[MCP Integration] 初始化失败:", error);
         throw error;
     }
 }
@@ -89,6 +93,7 @@ export async function shutdownMCPIntegration() {
     if (!state.initialized) {
         return;
     }
+    // 使用全局 logger（若已在 init 时设置）
     console.log("[MCP Integration] 正在关闭...");
     await shutdownMCP();
     state.manager = null;
@@ -157,14 +162,12 @@ export function getMCPTools() {
 export function registerMCPToolsToExecutor(executor) {
     const tools = getMCPTools();
     if (tools.length === 0) {
-        console.log("[MCP Integration] 没有 MCP 工具可注册");
         return 0;
     }
     // 注册每个工具
     for (const tool of tools) {
         executor.registerTool(tool);
     }
-    console.log(`[MCP Integration] 已注册 ${tools.length} 个 MCP 工具到 ToolExecutor`);
     return tools.length;
 }
 /**
@@ -191,18 +194,19 @@ export function getMCPDiagnostics() {
 /**
  * 打印 MCP 状态
  */
-export function printMCPStatus() {
+export function printMCPStatus(logger) {
     const diag = getMCPDiagnostics();
     if (!diag) {
-        console.log("[MCP] 未初始化");
+        (logger ? logger.info("mcp", "未初始化") : console.log("[MCP] 未初始化"));
         return;
     }
-    console.log(`[MCP] 状态: ${diag.initialized ? "已初始化" : "未初始化"}`);
-    console.log(`[MCP] 服务器: ${diag.connectedCount}/${diag.serverCount} 已连接`);
-    console.log(`[MCP] 工具: ${diag.toolCount} 个可用`);
+    const log = (msg) => (logger ? logger.info("mcp", msg) : console.log(`[MCP] ${msg}`));
+    log(`状态: ${diag.initialized ? "已初始化" : "未初始化"}`);
+    log(`服务器: ${diag.connectedCount}/${diag.serverCount} 已连接`);
+    log(`工具: ${diag.toolCount} 个可用`);
     if (diag.servers.length > 0) {
         for (const server of diag.servers) {
-            console.log(`  - ${server.name} (${server.id}): ${server.status}, ${server.toolCount} 工具`);
+            log(`  - ${server.name} (${server.id}): ${server.status}, ${server.toolCount} 工具`);
         }
     }
 }

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
-import type { Tool, ToolContext, ToolCallResult } from "../types.js";
+import dns from "node:dns/promises";
+import type { Tool, ToolContext, ToolCallResult } from "../types.js";;
 
 export const fetchTool: Tool = {
   definition: {
@@ -96,6 +97,16 @@ export const fetchTool: Tool = {
     }
 
     const body = method === "POST" && typeof args.body === "string" ? args.body : undefined;
+
+    // [SECURITY] DNS 解析后二次校验（防 DNS Rebinding）
+    try {
+      const { address } = await dns.lookup(hostname);
+      if (isPrivateIP(address)) {
+        return makeError(`SSRF 防护：DNS 解析到内网地址 ${address}`);
+      }
+    } catch (dnsErr) {
+      // DNS 解析失败，允许继续（fetch 会自己处理）
+    }
 
     // 执行请求
     const controller = new AbortController();
@@ -207,6 +218,22 @@ function isPrivateHost(hostname: string): boolean {
 
   // 0.0.0.0
   if (hostname === "0.0.0.0") return true;
+
+  return false;
+}
+
+/** 检查 IP 是否为私有/内网地址（用于 DNS 解析后的二次校验） */
+function isPrivateIP(ip: string): boolean {
+  // IPv4 私有地址
+  if (ip === "127.0.0.1" || ip.startsWith("127.")) return true;
+  if (ip.startsWith("10.")) return true;
+  if (ip.startsWith("192.168.")) return true;
+  if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip)) return true;
+  if (ip.startsWith("169.254.")) return true;
+  if (ip === "0.0.0.0") return true;
+
+  // IPv6 本地
+  if (ip === "::1" || ip.startsWith("fe80:")) return true;
 
   return false;
 }

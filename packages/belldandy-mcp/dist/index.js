@@ -28,6 +28,8 @@
  */
 // 类型守卫和默认值
 export { isStdioTransport, isSSETransport, DEFAULT_MCP_CONFIG, DEFAULT_SERVER_CONFIG, } from "./types.js";
+// 日志适配器（供 belldandy-core 注入 logger）
+export { setMCPLogger } from "./logger-adapter.js";
 // 配置模块
 export { loadConfig, saveConfig, createDefaultConfig, configExists, addServer, removeServer, updateServer, getServer, getEnabledServers, getAutoConnectServers, BELLDANDY_DIR, MCP_CONFIG_PATH, } from "./config.js";
 // 客户端

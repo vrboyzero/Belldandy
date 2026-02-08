@@ -11,6 +11,7 @@ export { codeInterpreterTool } from "./builtin/code-interpreter/index.js";
 export { imageGenerateTool, textToSpeechTool, cameraSnapTool } from "./builtin/multimedia/index.js";
 export { sessionsSpawnTool, sessionsHistoryTool } from "./builtin/session/index.js";
 export { methodListTool, methodReadTool, methodCreateTool, methodSearchTool } from "./builtin/methodology/index.js";
+export { logReadTool, logSearchTool } from "./builtin/log.js";
 export { browserOpenTool, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserGetContentTool, browserSnapshotTool, } from "./builtin/browser/tools.js";
 export { createMemorySearchTool, createMemoryGetTool, type MemorySearchToolConfig } from "./builtin/memory.js";
 export { memorySearchTool, memoryIndexTool } from "./builtin/memory.js";

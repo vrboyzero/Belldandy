@@ -2,6 +2,12 @@
 
 本文档详细介绍了 Belldandy 项目已完成的功能模块及后续规划，旨在帮助开发者和使用者深入理解系统设计与能力。同时，为了方便对比与参考，附录部分详细列出了参考目标 **openclawt** 的完整能力清单。
 
+## 1. 范围与约束
+
+- **开发目录**：`e:\project\Belldandy`
+- **参考目录（只读）**：`E:\project\belldandy\openclaw`（不修改、不编码）
+- **参考目录（只读）**：`E:\project\belldandy\UI-TARS-desktop-main`（不修改、不编码）
+
 ## ✅ 已完成功能模块
 
 ### 1. 基础架构与 WebChat (Phase 1-2)
@@ -467,73 +473,46 @@
 
 ---
 
-## 🔐 安全与网络加固路线图
+## 🔐 安全与网络加固路线图 ✅ 已完成 (2026-02-08)
 
-> 本节基于当前代码实现的安全评估结果，按优先级梳理出后续需要落实的安全加固工作，便于在 Roadmap 中单独排期（可作为后续 Phase 19+ 的输入）。
+> 基于安全评估结果完成的加固工作，已在 Phase 19 落地实现。
 
-### 1. P0：配对绕过风险（workspace.read 暴露 allowlist/mcp 配置）
+### 1. P0：配对绕过风险 ✅
 
-- **现状与风险**：
-  - Gateway 提供的 `workspace.read` / `workspace.list` RPC 当前不在 `secureMethods` 中，未配对客户端也可以调用。
-  - 由于 `~/.belldandy/allowlist.json`（授权客户端列表）和 `~/.belldandy/mcp.json`（MCP 配置）都位于 `stateDir` 且扩展名为 `.json`，在默认配置下，可以通过 `workspace.read` 被读取，然后伪造 `clientId` 绕过 Pairing 机制。
-- **最小改动方向（代码位置）**：
-  - 在 `packages/belldandy-core/src/server.ts` 中：
-    - 将 `"workspace.read"`、`"workspace.list"` 纳入 `secureMethods` 列表，使其与 `message.send/config.read/config.update/system.restart/workspace.write` 一样受 `isClientAllowed` 保护。
-    - 或者在 `handleReq` 的 `case "workspace.read"` 分支中，对 `allowlist.json`、`pairing.json`、`mcp.json` 等文件名做显式拒绝，禁止通过 RPC 读取这些内部状态文件。
-  - 进一步规划一个内部状态目录（如 `stateDir/internal/`），仅供服务端访问，不通过任何 RPC 暴露。
+- **修复内容**：
+  - 将 `workspace.read/list` 纳入 `secureMethods`（server.ts L245）
+  - 敏感文件黑名单：`allowlist.json/pairing.json/mcp.json/feishu-state.json`（server.ts L507-512）
 
-### 2. P1：本地 WebSocket 被浏览器脚本劫持（CSWSH）+ 默认 AUTH_MODE=none
+### 2. P1：CSWSH 防护 + 安全启动 ✅
 
-- **现状与风险**：
-  - 默认配置为 `HOST=127.0.0.1`、`AUTH_MODE=none`，本机浏览器中任意网页脚本都可以尝试连接 `ws://127.0.0.1:28889`。
-  - 结合上面的 P0 问题，恶意网页可以在用户不知情的情况下连上 Gateway → 读取 `allowlist.json` → 伪造已配对 `clientId` → 获取完整控制权（读写 workspace、修改配置、控制浏览器等）。
-- **最小改动方向（代码位置）**：
-  - 在 `packages/belldandy-core/src/bin/gateway.ts` 中：
-    - 将默认 `BELLDANDY_AUTH_MODE` 从 `none` 调整为 `token`，并在 `.env.example` 与文档中同步说明。
-    - 启动时若检测到 `HOST=0.0.0.0` 且 `AUTH_MODE=none`，直接拒绝启动（抛错并退出），而不是仅打印 Warning。
-  - 在 `server.ts:acceptConnect` 中考虑引入仅服务器掌握的 `sessionToken`/`serverNonce`，要求客户端在 `connect` 帧中返回，以降低被任意本地脚本伪造连接的风险（结合启动脚本中已有的 Magic Token 机制）。
+- **修复内容**：
+  - Origin Header 白名单校验，使用 `verifyClient` 回调（server.ts L84-112）
+  - 新增 `BELLDANDY_ALLOWED_ORIGINS` 环境变量
+  - `HOST=0.0.0.0` + `AUTH_MODE=none` 组合时强制退出（gateway.ts L281-286）
 
-### 3. P1：config.read/update 暴露与篡改 `.env.local`
+### 3. P1：配置泄露防护 ✅
 
-- **现状与风险**：
-  - `config.read` 当前会直接读取项目根目录下的 `.env.local` 并将所有键值原样返回，`config.update` 可写入任意 key。
-  - 在 P0 绕过存在时，这意味着 `.env.local` 中存放的 OpenAI Key、MCP Token 等 secrets 可能被远程读取或恶意修改。
-- **最小改动方向（代码位置）**：
-  - 在 `packages/belldandy-core/src/server.ts` 的 `case "config.read"` 分支中：
-    - 对包含 `password/token/api_key/secret` 等敏感字段名的值进行脱敏处理（例如统一返回 `[REDACTED]`），对齐 `packages/belldandy-skills/src/executor.ts` 中 `audit` 的脱敏逻辑。
-  - 在 `case "config.update"` 中：
-    - 增加允许修改键的白名单，仅允许更改模型配置、心跳参数、浏览器中继等运行相关配置，禁止远程修改日志目录、stateDir 等安全敏感项。
+- **修复内容**：
+  - `config.read` 对敏感字段（`*KEY*/*SECRET*/*TOKEN*/*PASSWORD*`）返回 `[REDACTED]`（server.ts L346-356）
+  - `config.update` 白名单限制，仅允许修改安全配置项（server.ts L363-376）
 
-### 4. P2：MCP 与高权限工具的边界收紧（显式 Opt-in）
+### 4. P2：危险工具 Opt-in ✅
 
-- **现状与风险**：
-  - MCP 服务器一旦启用，其提供的所有工具会被桥接为本地工具（`mcp_{serverId}_{toolName}`），能力完全由远端实现决定（可能包含远程文件/命令/网络等高权限操作）。
-  - 高权限工具 `run_command`、`terminal`、`code_interpreter` 在 `@belldandy/skills` 中对开发者开放，若被误注册进 Gateway，对外即形成标准 RCE 接口。
-- **最小改动方向（代码位置）**：
-  - 在 `packages/belldandy-core/src/bin/gateway.ts` 中：
-    - 强化对 `BELLDANDY_MCP_ENABLED` 的判断：仅在 `TOOLS_ENABLED=true` 且显式开启 MCP 时才注册 MCP 工具，并在日志中打印当前启用的 MCP 服务器与工具数量，便于审计。
-  - 在 `packages/belldandy-skills/src/index.ts` 与开发文档中：
-    - 对 `run_command` / `terminal` / `code_interpreter` 明确标注为“高风险，仅供本地开发调试使用”，要求上层集成者在注册到对外 Agent 前进行显式 Opt-in。
+- **修复内容**：
+  - 新增 `BELLDANDY_DANGEROUS_TOOLS_ENABLED` 环境变量，默认 `false`（gateway.ts L318-319）
+  - `run_command` 仅在显式启用时注册（gateway.ts L330-331）
+  - 启用时输出警告日志（gateway.ts L378-381）
 
-### 5. P2：web_fetch SSRF 防护细节增强
+### 5. P2：SSRF 防护增强 ✅
 
-- **现状与风险**：
-  - 目前的 SSRF 防护基于 `URL.hostname` 的字符串匹配，能够拦截明显的内网域名/IP，但对整数 IP（如 `http://2130706433/`）或某些 DNS 解析到内网的场景缺乏覆盖。
-- **最小改动方向（代码位置）**：
-  - 在 `packages/belldandy-skills/src/builtin/fetch.ts` 中：
-    - 在发送请求前，对 `url.hostname` 做进一步解析：
-      - 若为纯数字或非常规 IP 格式，尝试解析为 IP 后再次调用 `isPrivateHost`；
-      - 可选增加 `dns.lookup` 的解析步骤，将解析结果 IP 再过一遍内网网段检查（可通过策略开关控制，避免影响性能）。
+- **修复内容**：
+  - 新增 `dns.lookup` 解析后二次校验，防止 DNS Rebinding（fetch.ts L99-109）
+  - 新增 `isPrivateIP` 函数校验解析后的 IP（fetch.ts L215-231）
 
-### 6. P3：浏览器自动化的域名/页面访问控制
+### 6. P3：浏览器域名控制 ⏳ 待验证
 
-- **现状与风险**：
-  - 启用 Browser Relay (`BELLDANDY_BROWSER_RELAY_ENABLED=true`) 后，Agent 可以在用户浏览器中打开任意 URL、读取内容、截图并执行操作，目前缺少对访问域名或路径的显式限制。
-- **最小改动方向（代码位置）**：
-  - 在 `packages/belldandy-skills/src/builtin/browser/tools.ts` 中：
-    - 为 `browser_open` / `browser_navigate` 增加可选的域名白名单/黑名单策略，参数结构可以复用 `web_fetch` 的 `allowedDomains` / `deniedDomains` 思路。
-  - 在 Gateway 与配置层面：
-    - 通过环境变量（如 `BELLDANDY_BROWSER_ALLOWED_DOMAINS`）注入默认可访问域名，并在 README/使用手册中强调“启用浏览器控制等同于赋予 Agent 对浏览器的高权限操作能力”。
+- **已准备**：`BELLDANDY_BROWSER_ALLOWED_DOMAINS` 环境变量已添加到 `.env.example`
+- **待实现**：实际域名校验逻辑（低优先级）
 
 ---
 

@@ -9,9 +9,14 @@ import type { ToolExecutor, Tool } from "@belldandy/skills";
 /**
  * 初始化 MCP 集成
  *
+ * @param logger 可选，统一 Logger。传入后 MCP 模块的日志将写入文件
  * @returns MCP 管理器实例
  */
-export declare function initMCPIntegration(): Promise<MCPManager>;
+export declare function initMCPIntegration(logger?: {
+    info: (m: string, msg: string, d?: unknown) => void;
+    warn: (m: string, msg: string, d?: unknown) => void;
+    error: (m: string, msg: string, d?: unknown) => void;
+}): Promise<MCPManager>;
 /**
  * 关闭 MCP 集成
  */
@@ -57,6 +62,8 @@ export declare function getMCPDiagnostics(): {
 /**
  * 打印 MCP 状态
  */
-export declare function printMCPStatus(): void;
+export declare function printMCPStatus(logger?: {
+    info: (m: string, msg: string) => void;
+}): void;
 export type { MCPManager };
 //# sourceMappingURL=index.d.ts.map

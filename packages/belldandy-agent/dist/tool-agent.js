@@ -77,17 +77,18 @@ export class ToolEnabledAgent {
                     yield* yieldItem({ type: "status", status: "error" });
                     return;
                 }
-                // 输出文本增量（如果有）
-                if (response.content) {
-                    for (const delta of splitText(response.content, 16)) {
+                // 输出文本增量（如果有）；先剥离工具调用协议块，避免在对话中展示
+                const contentForDisplay = stripToolCallsSection(response.content || "");
+                if (contentForDisplay) {
+                    for (const delta of splitText(contentForDisplay, 16)) {
                         yield* yieldItem({ type: "delta", delta });
                     }
                 }
                 // 检查是否有工具调用
                 const toolCalls = response.toolCalls;
                 if (!toolCalls || toolCalls.length === 0) {
-                    // 无工具调用，输出最终结果
-                    yield* yieldItem({ type: "final", text: response.content || "" });
+                    // 无工具调用，输出最终结果（已剥离协议块）
+                    yield* yieldItem({ type: "final", text: contentForDisplay });
                     yield* yieldItem({ type: "status", status: "done" });
                     return;
                 }
@@ -182,7 +183,7 @@ export class ToolEnabledAgent {
                             }, toolHookCtx);
                         }
                         catch (err) {
-                            console.error(`钩子 after_tool_call 执行失败: ${err}`);
+                            this.opts.logger?.error("agent", `钩子 after_tool_call 执行失败: ${err}`) ?? console.error(`钩子 after_tool_call 执行失败: ${err}`);
                         }
                     }
                     else if (this.opts.hooks?.afterToolCall) {
@@ -198,7 +199,7 @@ export class ToolEnabledAgent {
                             }, legacyHookCtx);
                         }
                         catch (err) {
-                            console.error(`Hook afterToolCall failed: ${err}`);
+                            this.opts.logger?.error("agent", `Hook afterToolCall failed: ${err}`) ?? console.error(`Hook afterToolCall failed: ${err}`);
                         }
                     }
                     // 广播工具结果事件
@@ -233,7 +234,7 @@ export class ToolEnabledAgent {
                     }, agentHookCtx);
                 }
                 catch (err) {
-                    console.error(`钩子 agent_end 执行失败: ${err}`);
+                    this.opts.logger?.error("agent", `钩子 agent_end 执行失败: ${err}`) ?? console.error(`钩子 agent_end 执行失败: ${err}`);
                 }
             }
             else if (this.opts.hooks?.afterRun) {
@@ -242,7 +243,7 @@ export class ToolEnabledAgent {
                     await this.opts.hooks.afterRun({ input, items: generatedItems }, legacyHookCtx);
                 }
                 catch (err) {
-                    console.error(`Hook afterRun failed: ${err}`);
+                    this.opts.logger?.error("agent", `Hook afterRun failed: ${err}`) ?? console.error(`Hook afterRun failed: ${err}`);
                 }
             }
         }
@@ -349,5 +350,15 @@ function splitText(text, size) {
         i += Math.max(1, size);
     }
     return out;
+}
+/** 移除模型输出中的工具调用协议块，避免在对话中展示给用户 */
+function stripToolCallsSection(text) {
+    if (!text || typeof text !== "string")
+        return text;
+    return text
+        .replace(/<\|tool_calls_section_begin\|>[\s\S]*?<\|tool_calls_section_end\|>/g, "\n\n（正在执行操作）\n\n")
+        .replace(/<\|tool_call_begin\|>[\s\S]*?<\|tool_call_end\|>/g, "")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
 }
 //# sourceMappingURL=tool-agent.js.map

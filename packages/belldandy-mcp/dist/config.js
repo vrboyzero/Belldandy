@@ -6,6 +6,7 @@
 import { readFile, writeFile, mkdir, access } from "node:fs/promises";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { mcpLog } from "./logger-adapter.js";
 import { z } from "zod";
 import { DEFAULT_MCP_CONFIG, DEFAULT_SERVER_CONFIG, } from "./types.js";
 // ============================================================================
@@ -97,8 +98,8 @@ export async function configExists() {
 export async function loadConfig() {
     // 检查配置文件是否存在
     if (!(await configExists())) {
-        console.log(`[MCP] 配置文件不存在: ${MCP_CONFIG_PATH}`);
-        console.log(`[MCP] 使用默认配置（无服务器）`);
+        mcpLog("MCP", `配置文件不存在: ${MCP_CONFIG_PATH}`);
+        mcpLog("MCP", "使用默认配置（无服务器）");
         return { ...DEFAULT_MCP_CONFIG };
     }
     try {
@@ -121,7 +122,7 @@ export async function loadConfig() {
             }
             serverIds.add(server.id);
         }
-        console.log(`[MCP] 已加载配置，共 ${result.data.servers.length} 个服务器`);
+        mcpLog("MCP", `已加载配置，共 ${result.data.servers.length} 个服务器`);
         return result.data;
     }
     catch (error) {
@@ -155,7 +156,7 @@ export async function saveConfig(config) {
     // 写入配置文件
     const content = JSON.stringify(config, null, 2);
     await writeFile(MCP_CONFIG_PATH, content, "utf-8");
-    console.log(`[MCP] 配置已保存到: ${MCP_CONFIG_PATH}`);
+    mcpLog("MCP", `配置已保存到: ${MCP_CONFIG_PATH}`);
 }
 /**
  * 创建默认配置文件
@@ -164,7 +165,7 @@ export async function saveConfig(config) {
  */
 export async function createDefaultConfig() {
     if (await configExists()) {
-        console.log(`[MCP] 配置文件已存在: ${MCP_CONFIG_PATH}`);
+        mcpLog("MCP", `配置文件已存在: ${MCP_CONFIG_PATH}`);
         return;
     }
     const defaultConfig = {
@@ -190,7 +191,7 @@ export async function createDefaultConfig() {
         },
     };
     await saveConfig(defaultConfig);
-    console.log(`[MCP] 已创建默认配置文件: ${MCP_CONFIG_PATH}`);
+    mcpLog("MCP", `已创建默认配置文件: ${MCP_CONFIG_PATH}`);
 }
 // ============================================================================
 // 配置操作函数

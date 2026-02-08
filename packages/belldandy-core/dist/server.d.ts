@@ -1,5 +1,6 @@
 import { type BelldandyAgent } from "@belldandy/agent";
 import type { GatewayEventFrame } from "@belldandy/protocol";
+import type { BelldandyLogger } from "./logger/index.js";
 export type GatewayServerOptions = {
     port: number;
     host?: string;
@@ -16,6 +17,8 @@ export type GatewayServerOptions = {
         ttlSeconds?: number;
     };
     onActivity?: () => void;
+    /** 可选：统一 Logger，未提供时使用 console */
+    logger?: BelldandyLogger;
 };
 export type GatewayServer = {
     port: number;

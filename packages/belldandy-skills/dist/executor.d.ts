@@ -1,19 +1,32 @@
 import type { Tool, ToolCallRequest, ToolCallResult, ToolPolicy, ToolAuditLog, AgentCapabilities } from "./types.js";
 /** 默认策略（最小权限） */
 export declare const DEFAULT_POLICY: ToolPolicy;
+/** Logger 接口，供工具在 context 中使用 */
+export type ToolExecutorLogger = {
+    info(message: string): void;
+    warn(message: string): void;
+    error(message: string): void;
+    debug?(message: string): void;
+};
 export type ToolExecutorOptions = {
     tools: Tool[];
     workspaceRoot: string;
+    /** 额外允许的文件操作根目录（Agent 可读写这些目录下的文件） */
+    extraWorkspaceRoots?: string[];
     policy?: Partial<ToolPolicy>;
     auditLogger?: (log: ToolAuditLog) => void;
     agentCapabilities?: AgentCapabilities;
+    /** 可选：传入后注入到 ToolContext，供工具使用 */
+    logger?: ToolExecutorLogger;
 };
 export declare class ToolExecutor {
     private readonly tools;
     private readonly workspaceRoot;
+    private readonly extraWorkspaceRoots;
     private readonly policy;
     private readonly auditLogger?;
     private readonly agentCapabilities?;
+    private readonly logger?;
     constructor(options: ToolExecutorOptions);
     /** 获取所有工具定义（用于发送给模型） */
     getDefinitions(): {
