@@ -689,3 +689,45 @@ if (browserRelayEnabled) {
     logger.error("browser-relay", "Relay Error", err);
   });
 }
+
+// 12. 监听 .env / .env.local 文件变更，自动触发重启
+// 配合 launcher.ts 使用：exit(100) 会被 launcher 捕获并重新启动 gateway
+{
+  const ENV_FILES = [
+    path.join(process.cwd(), ".env"),
+    path.join(process.cwd(), ".env.local"),
+  ];
+  const DEBOUNCE_MS = 1500; // 防抖间隔，避免保存时多次触发
+  let restartTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const triggerRestart = (filePath: string) => {
+    if (restartTimer) clearTimeout(restartTimer);
+    restartTimer = setTimeout(() => {
+      const fileName = path.basename(filePath);
+      logger.info("config-watcher", `检测到 ${fileName} 变更，正在重启服务...`);
+      // 广播通知所有 WebSocket 客户端
+      server.broadcast({
+        type: "event",
+        event: "agent.status",
+        payload: { status: "restarting", reason: `${fileName} changed` },
+      });
+      // 延迟 300ms 让广播发出后再退出
+      setTimeout(() => process.exit(100), 300);
+    }, DEBOUNCE_MS);
+  };
+
+  for (const envFile of ENV_FILES) {
+    try {
+      if (fs.existsSync(envFile)) {
+        fs.watch(envFile, (eventType) => {
+          if (eventType === "change") {
+            triggerRestart(envFile);
+          }
+        });
+        logger.info("config-watcher", `监听 ${path.basename(envFile)} 变更`);
+      }
+    } catch {
+      // 文件不存在或无权监听 → 跳过（不阻塞启动）
+    }
+  }
+}
