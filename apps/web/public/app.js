@@ -564,21 +564,19 @@ function handleEvent(event, payload) {
     if (!delta) return;
     if (!botMsgEl) botMsgEl = appendMessage("bot", "");
 
-    // Check scroll position BEFORE adding content
-    const wasAtBottom = isNearBottom(messagesEl);
-
     botMsgEl.textContent += delta;
 
-    if (wasAtBottom) forceScrollToBottom();
+    // 强制滚动到底部（测试模式）
+    forceScrollToBottom();
     return;
   }
   if (event === "chat.final") {
     const text = payload && payload.text ? String(payload.text) : "";
     if (!botMsgEl) botMsgEl = appendMessage("bot", "");
 
-    const wasAtBottom = isNearBottom(messagesEl);
     botMsgEl.textContent = text;
-    if (wasAtBottom) forceScrollToBottom();
+    // 强制滚动到底部（测试模式）
+    forceScrollToBottom();
     return;
   }
 }
@@ -595,9 +593,9 @@ function appendMessage(kind, text) {
   const el = document.createElement("div");
   el.className = `msg ${kind}`;
   el.textContent = text;
-  const wasAtBottom = isNearBottom(messagesEl);
   messagesEl.appendChild(el);
-  if (wasAtBottom) forceScrollToBottom();
+  // 强制滚动到底部（测试模式）
+  forceScrollToBottom();
   return el;
 }
 
@@ -610,13 +608,14 @@ function isNearBottom(el, threshold = 100) {
 
 /** 如果用户在底部附近，自动滚动到最新消息 */
 function scrollToBottomIfNeeded() {
-  if (isNearBottom(messagesEl)) {
+  if (isNearBottom(chatSection)) {
     forceScrollToBottom();
   }
 }
 
+/** 强制滚动到底部 - 使用 chatSection 作为滚动容器 */
 function forceScrollToBottom() {
-  messagesEl.scrollTop = messagesEl.scrollHeight;
+  chatSection.scrollTop = chatSection.scrollHeight;
 }
 
 function safeJsonParse(raw) {
