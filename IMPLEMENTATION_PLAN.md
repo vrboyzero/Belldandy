@@ -332,7 +332,7 @@ moltbot 使用双层记忆结构：
 | **memory/YYYY-MM-DD 日常** | ✅ | ✅ | 已实现 |
 | **`memory_get` 工具** | ✅ | ✅ | 已实现 |
 | **向量检索** | ✅ | ✅ | 已实现 |
-| **Embedding Provider** | ✅ OpenAI/Gemini/Local | ✅ OpenAI | 已实现 |
+| **Embedding Provider** | ✅ OpenAI/Gemini/Local | ✅ OpenAI/Local | 已实现 |
 | **混合检索** | ✅ BM25+Vector | ✅ | 已实现 |
 | **sqlite-vec 加速** | ✅ | ✅ | 已实现 |
 | **Memory Flush** | ✅ | ❌ | 低优先 |
@@ -347,8 +347,10 @@ moltbot 使用双层记忆结构：
 | 4 | OpenAI embedding provider 实现 | 高 | ✅ 已完成 |
 | 5 | JS cosine similarity 向量搜索 | 中 | ✅ 已完成 |
 | 6 | 混合检索（BM25 + Vector，RRF 融合） | 中 | ✅ 已完成 |
-| 7 | Memory Flush 机制（compaction 前写入） | 低 | 待开始 |
-| 8 | Local embedding（node-llama-cpp GGUF） | 低 | 待开始 |
+| 7 | 本地 Embedding Provider（fastembed + BAAI/bge 系列） | 低 | ✅ 已完成 |
+| 8 | Memory Flush 机制（compaction 前写入） | 低 | 待开始 |
+| 9 | 本地推理（node-llama-cpp 等） | 低 | 待开始 |
+
 
 #### 4.5.4 验收用例
 
