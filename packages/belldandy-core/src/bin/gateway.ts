@@ -40,6 +40,7 @@ import {
   methodSearchTool,
   logReadTool,
   logSearchTool,
+  createCronTool,
 } from "@belldandy/skills";
 import { MemoryStore, MemoryIndexer, listMemoryFiles, ensureMemoryDir } from "@belldandy/memory";
 import { RelayServer } from "@belldandy/browser";
@@ -47,6 +48,7 @@ import { FeishuChannel } from "@belldandy/channels";
 
 import { startGatewayServer } from "../server.js";
 import { startHeartbeatRunner, type HeartbeatRunnerHandle } from "../heartbeat/index.js";
+import { CronStore, startCronScheduler, type CronSchedulerHandle } from "../cron/index.js";
 import {
   initMCPIntegration,
   shutdownMCPIntegration,
@@ -114,6 +116,9 @@ const feishuAppSecret = readEnv("BELLDANDY_FEISHU_APP_SECRET");
 const heartbeatEnabled = readEnv("BELLDANDY_HEARTBEAT_ENABLED") === "true";
 const heartbeatIntervalRaw = readEnv("BELLDANDY_HEARTBEAT_INTERVAL") ?? "30m";
 const heartbeatActiveHoursRaw = readEnv("BELLDANDY_HEARTBEAT_ACTIVE_HOURS"); // e.g. "08:00-23:00"
+
+// Cron 定时任务
+const cronEnabled = readEnv("BELLDANDY_CRON_ENABLED") === "true";
 
 // State & Memory
 const defaultStateDir = path.join(os.homedir(), ".belldandy");
@@ -319,6 +324,10 @@ if (embeddingEnabled && !openaiApiKey) {
 // [SECURITY] 危险工具需显式启用
 const dangerousToolsEnabled = readEnv("BELLDANDY_DANGEROUS_TOOLS_ENABLED") === "true";
 
+// Cron Store（无论是否启用调度器，工具都可以管理任务）
+const cronStore = new CronStore(stateDir);
+let cronSchedulerHandle: CronSchedulerHandle | undefined;
+
 // 3. Init Executor (conditional)
 const toolsToRegister = toolsEnabled
   ? [
@@ -350,6 +359,8 @@ const toolsToRegister = toolsEnabled
     methodSearchTool,
     logReadTool,
     logSearchTool,
+    // Cron 定时任务管理工具（始终注册，调度器可独立启停）
+    createCronTool({ store: cronStore, scheduler: { status: () => cronSchedulerHandle?.status() ?? { running: false, activeRuns: 0 } } }),
   ]
   : [];
 
@@ -676,7 +687,72 @@ if (heartbeatEnabled && createAgent) {
   logger.warn("heartbeat", "enabled but no Agent configured (provider not openai?), skipping.");
 }
 
-// 11. Start Browser Relay (if configured)
+// 11. Start Cron Scheduler (if configured)
+if (cronEnabled && createAgent) {
+  try {
+    const cronAgent = createAgent();
+    const activeHours = parseActiveHours(heartbeatActiveHoursRaw); // 复用 Heartbeat 活跃时段
+
+    // 复用 Heartbeat 的 sendMessage / deliverToUser 模式
+    const cronSendMessage = async (prompt: string): Promise<string> => {
+      let result = "";
+      for await (const item of cronAgent.run({
+        conversationId: `cron-${Date.now()}`,
+        text: prompt,
+      })) {
+        if (item.type === "delta") {
+          result += item.delta;
+        } else if (item.type === "final") {
+          result = item.text;
+        }
+      }
+      return result;
+    };
+
+    const cronDeliverToUser = async (message: string): Promise<void> => {
+      // 1. Broadcast 到 WebChat
+      server.broadcast({
+        type: "event",
+        event: "chat.final",
+        payload: {
+          conversationId: "cron-broadcast",
+          text: message,
+        },
+      });
+
+      // 2. 推送到飞书（如果配置了）
+      if (feishuChannel) {
+        logger.info("cron", "Delivering to user via Feishu...");
+        const sent = await feishuChannel.sendProactiveMessage(message);
+        if (!sent) {
+          logger.warn("cron", "Failed to deliver: No active Feishu chat session.");
+        }
+      } else {
+        logger.info("cron", "Broadcasted to local Web clients (Feishu disabled).");
+      }
+    };
+
+    cronSchedulerHandle = startCronScheduler({
+      store: cronStore,
+      sendMessage: cronSendMessage,
+      deliverToUser: cronDeliverToUser,
+      activeHours,
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      isBusy,
+      log: (msg) => logger.info("cron", msg),
+    });
+
+    logger.info("cron", `scheduler enabled (activeHours=${heartbeatActiveHoursRaw ?? "all"})`);
+  } catch (e) {
+    logger.warn("cron", "Agent creation failed, skipping Cron scheduler startup.");
+  }
+} else if (cronEnabled && !createAgent) {
+  logger.warn("cron", "enabled but no Agent configured, skipping.");
+} else {
+  logger.info("cron", "scheduler disabled (set BELLDANDY_CRON_ENABLED=true to enable)");
+}
+
+// 12. Start Browser Relay (if configured)
 const browserRelayEnabled = readEnv("BELLDANDY_BROWSER_RELAY_ENABLED") === "true";
 const browserRelayPort = Number(readEnv("BELLDANDY_RELAY_PORT") ?? "28892");
 

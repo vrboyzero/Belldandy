@@ -106,6 +106,10 @@ BELLDANDY_HEARTBEAT_INTERVAL=30m
 # 活跃时段（可选，深夜不打扰）
 BELLDANDY_HEARTBEAT_ACTIVE_HOURS=08:00-23:00
 
+# ------ 定时任务 (Cron) ------
+# 启用 Cron 调度引擎（Agent cron 工具始终可用，此开关仅控制自动执行）
+# BELLDANDY_CRON_ENABLED=true
+
 # ------ 日志系统 ------
 # 最低日志级别 (debug/info/warn/error)
 BELLDANDY_LOG_LEVEL=debug
@@ -259,7 +263,39 @@ Belldandy 会自动读取并索引 `.belldandy/MEMORY.md` 和 `.belldandy/memory
 
 > **注意**：心跳推送功能目前输出到日志，飞书推送正在开发中。
 
-### 5.4 日志系统 (Logs)
+### 5.4 定时任务 (Cron)
+
+比 Heartbeat 更灵活的精确定时任务系统。你可以让 Belldandy 在特定时间或按固定间隔执行任务。
+
+**启用方式**：在 `.env.local` 中添加：
+
+```env
+BELLDANDY_CRON_ENABLED=true
+```
+
+**使用方法**：直接在对话中告诉 Belldandy，它会通过 `cron` 工具自动管理：
+
+| 你说的话 | Belldandy 做的事 |
+|----------|------------------|
+| "下午 3 点提醒我开会" | 创建一次性任务 (`at`)，到点推送提醒 |
+| "每 4 小时提醒我喝水" | 创建周期任务 (`every`)，循环执行 |
+| "每天早上 9 点汇报新闻" | 创建周期任务，24h 间隔 |
+| "列出所有定时任务" | 显示任务列表 + 状态 |
+| "删掉喝水提醒" | 移除指定任务 |
+| "定时任务状态" | 查看调度器运行信息 |
+
+**与 Heartbeat 的区别**：
+
+| | Heartbeat | Cron |
+|---|-----------|------|
+| **用途** | 周期性“意识”检查 | 精确定时任务 |
+| **配置** | 编辑 `HEARTBEAT.md` | 对话中自然语言创建 |
+| **灵活性** | 固定间隔 | 一次性 / 任意间隔 |
+| **任务管理** | 修改文件 | `cron list/add/remove` |
+
+> **💡 提示**：即使未启用 `BELLDANDY_CRON_ENABLED`，你仍可以使用 `cron` 工具创建和管理任务列表。启用后调度器才会自动执行到期的任务。
+
+### 5.5 日志系统 (Logs)
 
 Belldandy 的运行日志保存在 `~/.belldandy/logs/` 目录，支持：
 

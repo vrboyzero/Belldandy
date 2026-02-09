@@ -32,6 +32,9 @@ export {
 
 export { logReadTool, logSearchTool } from "./builtin/log.js";
 
+// 定时任务工具
+export { createCronTool, type CronToolDeps } from "./builtin/cron-tool.js";
+
 // 浏览器控制工具
 export {
   browserOpenTool,

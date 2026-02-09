@@ -423,6 +423,41 @@
 
 > **改进建议**：未来应引入消息去重机制（Deduplication），防止 Agent 在无法执行操作时反复发送同一条提醒。
 
+### 2.5 Phase 7.5: Cron 定时任务系统 ✅ 方案 A 已完成
+
+- **目标**：在 Heartbeat 之上，抽象通用定时任务调度，让 Agent 能按计划触发非心跳类任务。
+- **状态**：**方案 A (轻量 MVP) 已完成**（2026-02-10）
+- **定位**：Heartbeat = 周期性"意识"检查（批量、共享上下文），Cron = 精确调度独立任务（一次性提醒、周期报告等）。
+- **实现内容**：
+    - **核心模块** (`packages/belldandy-core/src/cron/`)：
+        - `types.ts`：调度类型（`at` 一次性 / `every` 周期重复）、`systemEvent` Payload、Job 状态
+        - `store.ts`：JSON 文件持久化（`~/.belldandy/cron-jobs.json`），原子写入，CRUD
+        - `scheduler.ts`：30s 轮询引擎，活跃时段过滤，忙碌检测，`at` 执行后自动禁用/删除
+        - `index.ts`：统一导出
+    - **Agent 工具** (`packages/belldandy-skills/src/builtin/cron-tool.ts`)：
+        - `list`：列出所有定时任务
+        - `add`：创建任务（支持 `at` 和 `every` 两种调度）
+        - `remove`：删除任务
+        - `status`：查看调度器状态
+    - **Gateway 集成**：
+        - `BELLDANDY_CRON_ENABLED=true` 启用调度引擎
+        - 复用 Heartbeat 的 `sendMessage`/`deliverToUser` 模式
+        - 工具始终注册（即使调度器未启用也可管理任务列表）
+- **使用示例**：
+    - "每 4 小时提醒我站起来活动" → `cron add --every 14400000 --text "..."`
+    - "下午 3 点提醒我开会" → `cron add --at "2026-02-10T15:00:00+08:00" --text "..."`
+
+#### 🚀 方案 B 升级路径（未来按需）
+
+| 升级项 | 内容 | 好处 |
+|--------|------|------|
+| **Cron 表达式** | 引入 `croner` 库，支持 5 字段表达式（如 `0 9 * * 1`） | 精确到分钟的复杂调度（"每周一 9 点"） |
+| **Session 隔离** | `main` / `isolated` 会话目标 | 避免定时任务历史污染主会话上下文 |
+| **agentTurn Payload** | 在隔离会话中启动独立 Agent 对话，支持模型/thinking 覆盖 | 重任务用 Opus，轻任务用便宜模型 |
+| **Delivery 路由** | `announce` / `none` + 渠道定向推送 | 定时任务结果推送到指定飞书群/Telegram |
+| **Gateway 协议** | `cron.*` 系列 RPC 方法 | 前端 WebChat 可直接管理定时任务 |
+| **执行历史** | `run` / `runs` action | 手动触发 + 调试审计 |
+
 ### 3. MCP (Model Context Protocol) 支持 (Phase 17) ✅ 已完成
 
 - **目标**：实现 MCP 协议支持，让 Belldandy 能够连接外部 MCP 服务器，获取第三方工具和数据源。
