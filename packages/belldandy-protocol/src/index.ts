@@ -58,6 +58,11 @@ export type MessageSendParams = {
   conversationId?: string;
   text: string;
   from?: string;
+  attachments?: Array<{
+    name: string;
+    type: string;
+    base64: string;
+  }>;
 };
 
 export type ChatDeltaEvent = {

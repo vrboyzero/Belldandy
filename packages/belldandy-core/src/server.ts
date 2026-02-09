@@ -361,10 +361,65 @@ async function handleReq(
       const history = ctx.conversationStore.getHistory(conversationId);
       ctx.conversationStore.addMessage(conversationId, "user", parsed.value.text);
 
+      console.log("[Debug] Processing message.send. conversationId:", conversationId);
+      console.log("[Debug] Payload keys:", Object.keys(parsed.value));
+      if ('attachments' in parsed.value) {
+        const atts = (parsed.value as any).attachments;
+        console.log("[Debug] Attachments found:", Array.isArray(atts) ? atts.length : "Not Array", atts);
+      } else {
+        console.log("[Debug] No attachments field in payload");
+      }
+
+      // Handle Attachments
+      let promptText = parsed.value.text;
+      const attachments = parsed.value.attachments as Array<{ name: string; type: string; base64: string }> | undefined;
+
+      if (attachments && Array.isArray(attachments) && attachments.length > 0) {
+        console.log("[Debug] Processing", attachments.length, "attachments...");
+        const attachmentDir = path.join(ctx.stateDir, "storage", "attachments", conversationId);
+        if (!fs.existsSync(attachmentDir)) {
+          fs.mkdirSync(attachmentDir, { recursive: true });
+        }
+
+        const attachmentPrompts: string[] = [];
+        for (const att of attachments) {
+          const safeName = att.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+          const savePath = path.join(attachmentDir, safeName);
+
+          try {
+            const buffer = Buffer.from(att.base64, "base64");
+            fs.writeFileSync(savePath, buffer);
+
+            const isText = att.type.startsWith("text/") ||
+              att.name.endsWith(".md") ||
+              att.name.endsWith(".json") ||
+              att.name.endsWith(".js") ||
+              att.name.endsWith(".ts") ||
+              att.name.endsWith(".txt") ||
+              att.name.endsWith(".log");
+
+            if (isText) {
+              const content = buffer.toString("utf-8");
+              const truncated = content.length > 50000 ? content.slice(0, 50000) + "\n...[Truncated]" : content;
+              attachmentPrompts.push(`\n\n--- Attachment: ${att.name} ---\n${truncated}\n--- End of Attachment ---\n`);
+            } else {
+              attachmentPrompts.push(`\n[User uploaded a file: ${att.name} (type: ${att.type}), saved at: ${savePath}]`);
+            }
+          } catch (e) {
+            console.error(`Failed to save attachment ${att.name}:`, e);
+            attachmentPrompts.push(`\n[Failed to upload file: ${att.name}]`);
+          }
+        }
+
+        if (attachmentPrompts.length > 0) {
+          promptText += "\n" + attachmentPrompts.join("\n");
+        }
+      }
+
       void (async () => {
         try {
           let fullResponse = "";
-          for await (const item of agent.run({ conversationId, text: parsed.value.text, history })) {
+          for await (const item of agent.run({ conversationId, text: promptText, history })) {
             if (item.type === "status") {
               sendEvent(ws, { type: "event", event: "agent.status", payload: { conversationId, status: item.status } });
             }
@@ -389,29 +444,36 @@ async function handleReq(
     }
 
     case "config.read": {
-      const envPath = path.join(process.cwd(), ".env.local");
+      const envPath = path.join(process.cwd(), ".env");
+      const localEnvPath = path.join(process.cwd(), ".env.local");
       const config: Record<string, string> = {};
-      try {
-        if (fs.existsSync(envPath)) {
-          const raw = fs.readFileSync(envPath, "utf-8");
-          raw.split(/\r?\n/).forEach(line => {
-            const trimmed = line.trim();
-            if (trimmed && !trimmed.startsWith("#")) {
-              const eq = trimmed.indexOf("=");
-              if (eq > 0) {
-                const key = trimmed.slice(0, eq).trim();
-                let val = trimmed.slice(eq + 1).trim();
-                if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-                  val = val.slice(1, -1);
+
+      const readEnvFile = (p: string) => {
+        try {
+          if (fs.existsSync(p)) {
+            const raw = fs.readFileSync(p, "utf-8");
+            raw.split(/\r?\n/).forEach(line => {
+              const trimmed = line.trim();
+              if (trimmed && !trimmed.startsWith("#")) {
+                const eq = trimmed.indexOf("=");
+                if (eq > 0) {
+                  const key = trimmed.slice(0, eq).trim();
+                  let val = trimmed.slice(eq + 1).trim();
+                  if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+                    val = val.slice(1, -1);
+                  }
+                  config[key] = val;
                 }
-                config[key] = val;
               }
-            }
-          });
-        }
-      } catch (e) {
-        // ignore
-      }
+            });
+          }
+        } catch { }
+      };
+
+      // 1. Read .env (Base)
+      readEnvFile(envPath);
+      // 2. Read .env.local (Override)
+      readEnvFile(localEnvPath);
 
       // [SECURITY] 对敏感字段进行脱敏处理
       const REDACT_PATTERNS = [/KEY/i, /SECRET/i, /TOKEN/i, /PASSWORD/i, /CREDENTIAL/i];
@@ -436,7 +498,12 @@ async function handleReq(
         "BELLDANDY_OPENAI_BASE_URL", "BELLDANDY_OPENAI_MODEL",
         "BELLDANDY_HEARTBEAT_ENABLED", "BELLDANDY_HEARTBEAT_INTERVAL",
         "BELLDANDY_HEARTBEAT_ACTIVE_HOURS", "BELLDANDY_AGENT_TIMEOUT_MS",
-        "BELLDANDY_OPENAI_STREAM", "BELLDANDY_MEMORY_ENABLED"
+        "BELLDANDY_OPENAI_STREAM", "BELLDANDY_MEMORY_ENABLED",
+        "BELLDANDY_EXTRA_WORKSPACE_ROOTS",
+        // Extended whitelist for settings panel
+        "BELLDANDY_OPENAI_API_KEY", "BELLDANDY_AGENT_PROVIDER",
+        "BELLDANDY_EMBEDDING_OPENAI_API_KEY", "BELLDANDY_EMBEDDING_OPENAI_BASE_URL",
+        "BELLDANDY_EMBEDDING_MODEL"
       ]);
       for (const key of Object.keys(updates)) {
         if (!SAFE_UPDATE_KEYS.has(key)) {
@@ -444,50 +511,104 @@ async function handleReq(
         }
       }
 
-      const envPath = path.join(process.cwd(), ".env.local");
-      let lines: string[] = [];
-      try {
-        if (fs.existsSync(envPath)) {
-          lines = fs.readFileSync(envPath, "utf-8").split(/\r?\n/);
+      // Split updates
+      const envUpdates: Record<string, string> = {};
+      const localUpdates: Record<string, string> = {};
+
+      for (const key of Object.keys(updates)) {
+        if (key === "BELLDANDY_EXTRA_WORKSPACE_ROOTS") {
+          envUpdates[key] = updates[key];
+        } else {
+          localUpdates[key] = updates[key];
         }
-      } catch { }
+      }
 
-      const newKeys = new Set(Object.keys(updates));
-      const nextLines: string[] = [];
-      const handledKeys = new Set<string>();
+      const updateEnvFile = (filePath: string, changes: Record<string, string>) => {
+        if (Object.keys(changes).length === 0) return true;
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        let matched = false;
-        if (trimmed && !trimmed.startsWith("#")) {
-          const eq = trimmed.indexOf("=");
-          if (eq > 0) {
-            const key = trimmed.slice(0, eq).trim();
-            if (newKeys.has(key)) {
-              const val = updates[key];
-              nextLines.push(`${key}="${val}"`);
-              handledKeys.add(key);
-              matched = true;
+        let lines: string[] = [];
+        try {
+          if (fs.existsSync(filePath)) {
+            lines = fs.readFileSync(filePath, "utf-8").split(/\r?\n/);
+          }
+        } catch { }
+
+        const newKeys = new Set(Object.keys(changes));
+        const nextLines: string[] = [];
+        const handledKeys = new Set<string>();
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          let matched = false;
+          if (trimmed && !trimmed.startsWith("#")) {
+            const eq = trimmed.indexOf("=");
+            if (eq > 0) {
+              const key = trimmed.slice(0, eq).trim();
+              if (newKeys.has(key)) {
+                const val = changes[key];
+                nextLines.push(`${key}="${val}"`);
+                handledKeys.add(key);
+                matched = true;
+              }
             }
           }
+          if (!matched) nextLines.push(line);
         }
-        if (!matched) nextLines.push(line);
+
+        for (const key of newKeys) {
+          if (!handledKeys.has(key)) {
+            if (nextLines.length > 0 && nextLines[nextLines.length - 1] !== "") nextLines.push("");
+            nextLines.push(`${key}="${changes[key]}"`);
+          }
+        }
+
+        if (nextLines.length > 0 && nextLines[nextLines.length - 1] !== "") nextLines.push("");
+
+        try {
+          fs.writeFileSync(filePath, nextLines.join("\n"), "utf-8");
+          return true;
+        } catch (e) {
+          return false;
+        }
+      };
+
+      const envOk = updateEnvFile(path.join(process.cwd(), ".env"), envUpdates);
+      const localOk = updateEnvFile(path.join(process.cwd(), ".env.local"), localUpdates);
+
+      if (!envOk || !localOk) {
+        return { type: "res", id: req.id, ok: false, error: { code: "write_failed", message: "Failed to write config files" } };
       }
 
-      for (const key of newKeys) {
-        if (!handledKeys.has(key)) {
-          if (nextLines.length > 0 && nextLines[nextLines.length - 1] !== "") nextLines.push("");
-          nextLines.push(`${key}="${updates[key]}"`);
-        }
-      }
+      return { type: "res", id: req.id, ok: true };
+    }
 
+    // [NEW] 读取 .env 文件原始内容（用于编辑器）
+    case "config.readRaw": {
+      const envPath = path.join(process.cwd(), ".env");
       try {
-        if (nextLines.length > 0 && nextLines[nextLines.length - 1] !== "") nextLines.push(""); // End with newline
-        fs.writeFileSync(envPath, nextLines.join("\n"), "utf-8");
+        if (!fs.existsSync(envPath)) {
+          return { type: "res", id: req.id, ok: false, error: { code: "not_found", message: ".env 文件不存在" } };
+        }
+        const content = fs.readFileSync(envPath, "utf-8");
+        return { type: "res", id: req.id, ok: true, payload: { content } };
+      } catch (e) {
+        return { type: "res", id: req.id, ok: false, error: { code: "read_failed", message: String(e) } };
+      }
+    }
+
+    // [NEW] 写入 .env 文件原始内容（用于编辑器）
+    case "config.writeRaw": {
+      const content = req.params?.content;
+      if (typeof content !== "string") {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "Missing content" } };
+      }
+      const envPath = path.join(process.cwd(), ".env");
+      try {
+        fs.writeFileSync(envPath, content, "utf-8");
+        return { type: "res", id: req.id, ok: true };
       } catch (e) {
         return { type: "res", id: req.id, ok: false, error: { code: "write_failed", message: String(e) } };
       }
-      return { type: "res", id: req.id, ok: true };
     }
 
     case "system.restart": {
@@ -672,7 +793,8 @@ function parseMessageSendParams(value: unknown): { ok: true; value: MessageSendP
   const conversationId =
     typeof obj.conversationId === "string" && obj.conversationId.trim() ? obj.conversationId.trim() : undefined;
   const from = typeof obj.from === "string" && obj.from.trim() ? obj.from.trim() : undefined;
-  return { ok: true, value: { text, conversationId, from } };
+  const attachments = obj.attachments as any;
+  return { ok: true, value: { text, conversationId, from, attachments } };
 }
 
 function safeParseFrame(raw: string): GatewayFrame | null {

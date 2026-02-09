@@ -1201,3 +1201,115 @@ packages/belldandy-skills/src/builtin/
 
 **环境变量已更新到 `.env.example`**
 
+### Phase 20: WebChat UI 增强 (WebChat UI Enhancements) [已完成]
+
+**目标**：提升 WebChat 的可用性与交互体验，实现 4 个关键功能。
+
+**状态**: ✅ 已完成 (2026-02-09)
+
+#### 20.1 可操作区设置 (Workspace Roots Config)
+
+| 项目 | 内容 |
+|------|------|
+| **需求** | 在 Auth 区域左侧新增输入框，允许用户配置 `BELLDANDY_EXTRA_WORKSPACE_ROOTS` |
+| **UI 位置** | `apps/web/public/index.html` - `.panel > .row` 区域 |
+| **交互** | 输入格式：`E:/,D:/Game`（逗号分隔），保存到 localStorage 并通过 `config.update` 同步 |
+| **后端** | 需将 `BELLDANDY_EXTRA_WORKSPACE_ROOTS` 加入 `server.ts` 的 `SAFE_UPDATE_KEYS` 白名单 |
+
+**实现步骤**：
+1. [ ] 修改 `index.html`：在 Auth 左侧添加输入组（标题："可操作区设置"，说明小字）
+2. [ ] 修改 `styles.css`：调整 `.row` 布局，压缩 Auth 区域宽度
+3. [ ] 修改 `app.js`：添加 `workspaceRoots` 输入框的读写逻辑
+4. [ ] 修改 `server.ts`：将 `BELLDANDY_EXTRA_WORKSPACE_ROOTS` 加入白名单
+
+---
+
+#### 20.2 配置按钮 (.env 编辑器)
+
+| 项目 | 内容 |
+|------|------|
+| **需求** | 在"智能体设置"下方新增"配置"按钮，点击后在主区域打开 `.env` 文件进行编辑 |
+| **UI 位置** | `apps/web/public/index.html` - 侧边栏区域 |
+| **交互** | 复用现有编辑器模式（`switchMode('editor')`），支持保存/取消 |
+| **后端** | 使用现有 `workspace.read` / `workspace.write` 接口读写 `.env` 文件 |
+
+**实现步骤**：
+1. [ ] 修改 `index.html`：在侧边栏添加"配置"按钮
+2. [ ] 修改 `styles.css`：添加按钮样式（与"智能体设置"一致）
+3. [ ] 修改 `app.js`：添加点击事件处理，读取 `.env` 并打开编辑器
+4. [ ] 考虑安全：`.env` 文件已被 `workspace.read` 的黑名单保护，需评估是否开放或使用专用接口
+
+> ⚠️ **安全注意**：当前 `.env` 在 Phase 19 的安全加固中被列入黑名单。需要决定：
+> - 方案 A：使用专用 `config.readRaw` / `config.writeRaw` 接口（仅限已认证客户端）
+> - 方案 B：将 `.env` 从黑名单移除，依赖 `secureMethods` 保护
+
+---
+
+#### 20.3 消息自动滚动 (Auto-Scroll)
+
+| 项目 | 内容 |
+|------|------|
+| **需求** | 消息更新时自动滚动到底部；用户手动滚动查看历史时不打断 |
+| **UI 位置** | `apps/web/public/app.js` - `appendMessage` / `handleEvent` 函数 |
+| **交互** | 智能检测：若用户滚动条距离底部 < 100px，则新消息时自动滚动；否则不打断 |
+
+**实现步骤**：
+1. [ ] 修改 `app.js`：在 `appendMessage` 中添加智能滚动逻辑
+2. [ ] 添加 `isNearBottom()` 辅助函数检测滚动位置
+3. [ ] 在 `chat.delta` 事件处理中也触发滚动检测
+
+**代码示例**：
+```javascript
+function isNearBottom(el, threshold = 100) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+}
+
+function scrollToBottomIfNeeded() {
+  if (isNearBottom(messagesEl)) {
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+}
+```
+
+---
+
+#### 20.4 文件附件支持 (File Attachment)
+
+| 项目 | 内容 |
+|------|------|
+| **需求** | 支持在输入框添加文件（拖入 + 点击选择），发送时包含文件内容 |
+| **支持格式** | 图片：`jpg, png, gif`；文本：`txt, md, json, log` |
+| **UI 位置** | `apps/web/public/index.html` - `.composer` 区域 |
+| **交互** | 1. 拖拽区域高亮 2. `+` 按钮打开文件选择器 3. 预览已添加文件 4. 发送时编码并附加 |
+
+**实现步骤**：
+1. [ ] 修改 `index.html`：在 `.composer` 添加 `+` 按钮和隐藏的 `<input type="file">`
+2. [ ] 修改 `styles.css`：添加拖拽高亮、文件预览缩略图样式
+3. [ ] 修改 `app.js`：
+   - 添加 `dragover/drop` 事件处理
+   - 添加文件选择器触发逻辑
+   - 添加文件预览列表渲染
+   - 修改 `sendMessage` 以包含附件数据（Base64 或 DataURL）
+4. [ ] 修改后端 `message.send` 处理：解析附件并传递给 Agent（可能需要调整 `params` 结构）
+
+**附件数据结构**：
+```typescript
+interface Attachment {
+  name: string;
+  type: 'image' | 'text';
+  mimeType: string;
+  content: string; // Base64 for images, raw text for text files
+}
+```
+
+---
+
+#### 20.5 实施优先级
+
+| 优先级 | 功能 | 复杂度 | 原因 |
+|--------|------|--------|------|
+| P1 | 20.3 消息自动滚动 | 低 | 纯前端，无后端改动，体验提升明显 |
+| P2 | 20.1 可操作区设置 | 中 | 需要前后端配合，但逻辑清晰 |
+| P3 | 20.2 配置按钮 | 中 | 需要评估安全策略，可能需要新接口 |
+| P4 | 20.4 文件附件 | 高 | 涉及文件处理、预览、后端传输 |
+

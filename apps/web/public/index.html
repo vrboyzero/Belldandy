@@ -24,14 +24,33 @@
     </header>
 
     <section class="panel">
-      <div class="row">
-        <label class="label">Auth</label>
-        <select id="authMode" class="select">
-          <option value="none">none</option>
-          <option value="token">token</option>
-          <option value="password">password</option>
-        </select>
-        <input id="authValue" class="input" placeholder="token / password（可选）" />
+      <!-- 输入行 -->
+      <div class="row panel-input-row">
+        <!-- 可操作区输入 + 保存按钮 -->
+        <div class="panel-input-group workspace-input-group">
+          <div class="input-label-row">
+            <span class="panel-label">可操作区<span class="panel-hint">：额外允许读写的盘符与目录</span></span>
+          </div>
+          <div class="input-with-btn">
+            <input id="workspaceRoots" class="input input-sm" placeholder="E:/,D:/Game"
+              title="额外允许 Agent 读写的根目录，逗号分隔" />
+            <button id="saveWorkspaceRoots" class="save-link" title="保存到 .env"><u>保存</u></button>
+          </div>
+        </div>
+        <!-- Auth 选择 -->
+        <div class="panel-input-group auth-input-group">
+          <div class="input-label-row">
+            <span class="panel-label">Auth</span>
+          </div>
+          <div class="auth-controls">
+            <select id="authMode" class="select select-sm">
+              <option value="none">none</option>
+              <option value="token">token</option>
+              <option value="password">password</option>
+            </select>
+            <input id="authValue" class="input input-sm" placeholder="token / password" />
+          </div>
+        </div>
         <button id="connect" class="button">Connect</button>
       </div>
     </section>
@@ -43,6 +62,8 @@
           <span class="sidebar-title">智能体设置</span>
           <button id="refreshTree" class="sidebar-btn" title="刷新">⟳</button>
         </div>
+        <!-- 配置按钮 -->
+        <button id="openEnvEditor" class="sidebar-action-btn" title="编辑 .env 配置">⚙ 配置</button>
         <div class="file-tree" id="fileTree">
           <div class="tree-loading">加载中...</div>
         </div>
@@ -67,8 +88,15 @@
 
     <!-- 聊天模式：输入框 -->
     <section class="composer" id="composerSection">
-      <textarea id="prompt" class="input" placeholder="输入消息…" rows="1"></textarea>
-      <button id="send" class="button" disabled>Send</button>
+      <!-- 附件预览区 -->
+      <div class="attachments-preview" id="attachmentsPreview"></div>
+      <!-- 输入区 -->
+      <div class="composer-input-row">
+        <button id="attachBtn" class="attach-btn" title="添加附件">+</button>
+        <input type="file" id="fileInput" class="hidden" multiple accept=".jpg,.jpeg,.png,.gif,.txt,.md,.json,.log" />
+        <textarea id="prompt" class="input" placeholder="输入消息… (可拖拽文件到此)" rows="1"></textarea>
+        <button id="send" class="button" disabled>Send</button>
+      </div>
     </section>
 
     <!-- 编辑模式：操作按钮 -->

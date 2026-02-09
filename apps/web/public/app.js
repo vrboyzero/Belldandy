@@ -1,6 +1,7 @@
 const statusEl = document.getElementById("status");
 const authModeEl = document.getElementById("authMode");
 const authValueEl = document.getElementById("authValue");
+const workspaceRootsEl = document.getElementById("workspaceRoots");
 const connectBtn = document.getElementById("connect");
 const sendBtn = document.getElementById("send");
 const promptEl = document.getElementById("prompt");
@@ -22,6 +23,7 @@ const saveEditBtn = document.getElementById("saveEdit");
 
 const STORE_KEY = "belldandy.webchat.auth";
 const CLIENT_KEY = "belldandy.webchat.clientId";
+const WORKSPACE_ROOTS_KEY = "belldandy.webchat.workspaceRoots";
 
 let ws = null;
 let isReady = false;
@@ -37,6 +39,12 @@ let currentEditPath = null;
 let originalContent = null;
 const expandedFolders = new Set();
 
+// 附件状态
+const attachmentsPreviewEl = document.getElementById("attachmentsPreview");
+const attachBtn = document.getElementById("attachBtn");
+const fileInput = document.getElementById("fileInput");
+let pendingAttachments = []; // { name, type, mimeType, content }
+
 // 侧边栏状态（默认收起）
 let sidebarExpanded = false;
 if (sidebarEl) {
@@ -44,6 +52,7 @@ if (sidebarEl) {
 }
 
 restoreAuth();
+restoreWorkspaceRoots();
 // [NEW] Allow ?token=... param to override/set auth
 const urlParams = new URLSearchParams(window.location.search);
 const urlToken = urlParams.get("token");
@@ -108,8 +117,98 @@ function persistAuth() {
   }
 }
 
+function restoreWorkspaceRoots() {
+  try {
+    const saved = localStorage.getItem(WORKSPACE_ROOTS_KEY);
+    if (saved && workspaceRootsEl) workspaceRootsEl.value = saved;
+  } catch {
+    // ignore
+  }
+}
+
+function persistWorkspaceRoots() {
+  try {
+    if (workspaceRootsEl) {
+      localStorage.setItem(WORKSPACE_ROOTS_KEY, workspaceRootsEl.value);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+async function syncWorkspaceRoots() {
+  if (!ws || !isReady || !workspaceRootsEl) return;
+  const value = workspaceRootsEl.value.trim();
+  if (!value) return;
+
+  persistWorkspaceRoots();
+  const id = makeId();
+  await sendReq({
+    type: "req",
+    id,
+    method: "config.update",
+    params: { updates: { "BELLDANDY_EXTRA_WORKSPACE_ROOTS": value } }
+  });
+}
+
+// 从服务器加载可操作区配置值
+async function loadWorkspaceRootsFromServer() {
+  if (!ws || !isReady || !workspaceRootsEl) return;
+
+  const id = makeId();
+  const res = await sendReq({
+    type: "req",
+    id,
+    method: "config.read",
+  });
+
+  if (res && res.ok && res.payload && res.payload.config) {
+    const serverValue = res.payload.config["BELLDANDY_EXTRA_WORKSPACE_ROOTS"];
+    if (serverValue && serverValue !== "[REDACTED]") {
+      workspaceRootsEl.value = serverValue;
+      persistWorkspaceRoots(); // 同步到 localStorage
+    }
+  }
+}
+
+// 保存按钮点击事件
+const saveWorkspaceRootsBtn = document.getElementById("saveWorkspaceRoots");
+if (saveWorkspaceRootsBtn) {
+  saveWorkspaceRootsBtn.addEventListener("click", async () => {
+    if (!ws || !isReady) {
+      alert("请先连接到服务器");
+      return;
+    }
+
+    const value = workspaceRootsEl ? workspaceRootsEl.value.trim() : "";
+
+    // 保存到 localStorage
+    persistWorkspaceRoots();
+
+    // 更新 .env
+    const id = makeId();
+    const res = await sendReq({
+      type: "req",
+      id,
+      method: "config.update",
+      params: { updates: { "BELLDANDY_EXTRA_WORKSPACE_ROOTS": value } }
+    });
+
+    if (res && res.ok) {
+      saveWorkspaceRootsBtn.innerHTML = "<u>已保存</u>";
+      setTimeout(() => {
+        saveWorkspaceRootsBtn.innerHTML = "<u>保存</u>";
+      }, 1500);
+    } else {
+      const msg = res && res.error ? res.error.message : "保存失败";
+      alert(`保存失败: ${msg}`);
+    }
+  });
+}
+
 function connect() {
   persistAuth();
+  persistWorkspaceRoots();
   teardown();
 
   const proto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -165,6 +264,9 @@ function connect() {
 
       // 如果侧边栏已展开，加载文件树
       if (sidebarExpanded) loadFileTree();
+
+      // 从服务器加载当前配置并填充可操作区输入框
+      loadWorkspaceRootsFromServer();
 
       // Check if we should play boot sequence
       if (!sessionStorage.getItem("booted")) {
@@ -266,8 +368,32 @@ async function sendMessage() {
     return;
   }
 
-  appendMessage("me", text);
+  appendMessage("me", text + (pendingAttachments.length ? ` [${pendingAttachments.length} 附件]` : ""));
   botMsgEl = appendMessage("bot", "");
+
+  // 准备附件数据
+  const attachments = pendingAttachments.map(att => {
+    let base64 = "";
+    if (typeof att.content === "string" && att.content.startsWith("data:")) {
+      // Data URL (Image): strip prefix
+      base64 = att.content.split(",")[1];
+    } else {
+      // Text content: convert to base64 (UTF-8 safe)
+      try {
+        base64 = window.btoa(unescape(encodeURIComponent(att.content)));
+      } catch (e) {
+        console.error("Base64 conversion failed for", att.name, e);
+      }
+    }
+    return {
+      name: att.name,
+      type: att.mimeType || "application/octet-stream",
+      base64
+    };
+  });
+
+  pendingAttachments = [];
+  renderAttachmentsPreview();
 
   const id = makeId();
   const payload = await sendReq({
@@ -278,6 +404,7 @@ async function sendMessage() {
       conversationId: activeConversationId || undefined,
       text,
       from: "web",
+      attachments,
     },
   });
 
@@ -436,13 +563,22 @@ function handleEvent(event, payload) {
     const delta = payload && payload.delta ? String(payload.delta) : "";
     if (!delta) return;
     if (!botMsgEl) botMsgEl = appendMessage("bot", "");
+
+    // Check scroll position BEFORE adding content
+    const wasAtBottom = isNearBottom(messagesEl);
+
     botMsgEl.textContent += delta;
+
+    if (wasAtBottom) forceScrollToBottom();
     return;
   }
   if (event === "chat.final") {
     const text = payload && payload.text ? String(payload.text) : "";
     if (!botMsgEl) botMsgEl = appendMessage("bot", "");
+
+    const wasAtBottom = isNearBottom(messagesEl);
     botMsgEl.textContent = text;
+    if (wasAtBottom) forceScrollToBottom();
     return;
   }
 }
@@ -459,8 +595,28 @@ function appendMessage(kind, text) {
   const el = document.createElement("div");
   el.className = `msg ${kind}`;
   el.textContent = text;
+  const wasAtBottom = isNearBottom(messagesEl);
   messagesEl.appendChild(el);
+  if (wasAtBottom) forceScrollToBottom();
   return el;
+}
+
+// ==================== 自动滚动逻辑 ====================
+
+/** 检测滚动条是否接近底部 */
+function isNearBottom(el, threshold = 100) {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < threshold;
+}
+
+/** 如果用户在底部附近，自动滚动到最新消息 */
+function scrollToBottomIfNeeded() {
+  if (isNearBottom(messagesEl)) {
+    forceScrollToBottom();
+  }
+}
+
+function forceScrollToBottom() {
+  messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function safeJsonParse(raw) {
@@ -506,6 +662,124 @@ function resolveClientId() {
   return id;
 }
 
+// ==================== 附件处理逻辑 ====================
+
+// 附件按钮点击
+if (attachBtn) {
+  attachBtn.addEventListener("click", () => fileInput?.click());
+}
+
+// 文件选择
+if (fileInput) {
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files) handleFiles(fileInput.files);
+    fileInput.value = ""; // 重置以允许再次选择相同文件
+  });
+}
+
+// 拖拽支持 (composerSection 已在文件顶部声明)
+if (composerSection) {
+  composerSection.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    composerSection.classList.add("drag-over");
+  });
+  composerSection.addEventListener("dragleave", () => {
+    composerSection.classList.remove("drag-over");
+  });
+  composerSection.addEventListener("drop", (e) => {
+    e.preventDefault();
+    composerSection.classList.remove("drag-over");
+    if (e.dataTransfer?.files) handleFiles(e.dataTransfer.files);
+  });
+}
+
+// 处理文件列表
+async function handleFiles(files) {
+  const allowedTypes = {
+    image: [".jpg", ".jpeg", ".png", ".gif"],
+    text: [".txt", ".md", ".json", ".log"]
+  };
+
+  for (const file of files) {
+    const ext = "." + file.name.split(".").pop().toLowerCase();
+    const isImage = allowedTypes.image.includes(ext);
+    const isText = allowedTypes.text.includes(ext);
+
+    if (!isImage && !isText) {
+      console.warn(`不支持的文件类型: ${file.name}`);
+      continue;
+    }
+
+    try {
+      const content = await readFileContent(file, isImage);
+      pendingAttachments.push({
+        name: file.name,
+        type: isImage ? "image" : "text",
+        mimeType: file.type || (isImage ? "image/png" : "text/plain"),
+        content
+      });
+    } catch (err) {
+      console.error(`读取文件失败: ${file.name}`, err);
+    }
+  }
+
+  renderAttachmentsPreview();
+}
+
+// 读取文件内容
+function readFileContent(file, asBase64) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (asBase64) {
+        // 返回完整的 data URL
+        resolve(reader.result);
+      } else {
+        resolve(reader.result);
+      }
+    };
+    reader.onerror = () => reject(reader.error);
+    if (asBase64) {
+      reader.readAsDataURL(file);
+    } else {
+      reader.readAsText(file);
+    }
+  });
+}
+
+// 渲染附件预览
+function renderAttachmentsPreview() {
+  if (!attachmentsPreviewEl) return;
+  attachmentsPreviewEl.innerHTML = "";
+
+  pendingAttachments.forEach((att, idx) => {
+    const item = document.createElement("div");
+    item.className = "attachment-item";
+
+    if (att.type === "image") {
+      const img = document.createElement("img");
+      img.src = att.content;
+      img.alt = att.name;
+      item.appendChild(img);
+    }
+
+    const nameSpan = document.createElement("span");
+    nameSpan.textContent = att.name.length > 15 ? att.name.slice(0, 12) + "..." : att.name;
+    item.appendChild(nameSpan);
+
+    const removeBtn = document.createElement("button");
+    removeBtn.className = "remove-btn";
+    removeBtn.textContent = "×";
+    removeBtn.onclick = () => {
+      pendingAttachments.splice(idx, 1);
+      renderAttachmentsPreview();
+    };
+    item.appendChild(removeBtn);
+
+    attachmentsPreviewEl.appendChild(item);
+  });
+}
+
 // ==================== 文件树和编辑器逻辑 ====================
 
 // 侧边栏标题点击事件（展开/收起）
@@ -538,6 +812,41 @@ if (cancelEditBtn) {
 }
 if (saveEditBtn) {
   saveEditBtn.addEventListener("click", () => saveFile());
+}
+
+// 配置按钮事件
+const openEnvEditorBtn = document.getElementById("openEnvEditor");
+if (openEnvEditorBtn) {
+  openEnvEditorBtn.addEventListener("click", () => openEnvFile());
+}
+
+// 打开 .env 文件进行编辑
+async function openEnvFile() {
+  if (!ws || !isReady) {
+    alert("未连接到服务器");
+    return;
+  }
+
+  const id = makeId();
+  const res = await sendReq({
+    type: "req",
+    id,
+    method: "config.readRaw",
+  });
+
+  if (!res || !res.ok) {
+    const msg = res && res.error ? res.error.message : "读取失败";
+    alert(`无法读取配置文件: ${msg}`);
+    return;
+  }
+
+  currentEditPath = ".env";
+  originalContent = res.payload.content;
+
+  if (editorPath) editorPath.textContent = ".env (环境配置)";
+  if (editorTextarea) editorTextarea.value = res.payload.content;
+
+  switchMode("editor");
 }
 
 // 加载文件树
@@ -727,12 +1036,24 @@ async function saveFile() {
   }
 
   const id = makeId();
-  const res = await sendReq({
-    type: "req",
-    id,
-    method: "workspace.write",
-    params: { path: currentEditPath, content },
-  });
+  let res;
+
+  // 如果是 .env 文件，使用 config.writeRaw
+  if (currentEditPath === ".env") {
+    res = await sendReq({
+      type: "req",
+      id,
+      method: "config.writeRaw",
+      params: { content },
+    });
+  } else {
+    res = await sendReq({
+      type: "req",
+      id,
+      method: "workspace.write",
+      params: { path: currentEditPath, content },
+    });
+  }
 
   if (saveEditBtn) {
     saveEditBtn.disabled = false;
