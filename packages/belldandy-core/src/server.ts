@@ -138,6 +138,7 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
     openaiModel: process.env.BELLDANDY_EMBEDDING_MODEL, // [NEW] Pass configured model
     provider: (process.env.BELLDANDY_EMBEDDING_PROVIDER as "openai" | "local") || "openai",
     localModel: process.env.BELLDANDY_LOCAL_EMBEDDING_MODEL,
+    embeddingBatchSize: Number(process.env.BELLDANDY_EMBEDDING_BATCH_SIZE) || 2,
     indexerOptions: {
       // 重要：必须允许扫描 .belldandy 目录下的内容，否则默认 ignorePatterns 会跳过
       ignorePatterns: ["node_modules", ".git"],

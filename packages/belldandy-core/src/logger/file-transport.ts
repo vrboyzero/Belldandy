@@ -72,7 +72,12 @@ export function createFileTransport(opts: FileTransportOptions): LogTransport {
 
   /** 根据日期和大小获取当前应写入的文件路径 */
   function getCurrentPath(): string {
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    // [FIX] Use local time instead of UTC to ensure log names match system date
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    const today = `${year}-${month}-${day}`;
 
     if (currentDate !== today) {
       currentDate = today;

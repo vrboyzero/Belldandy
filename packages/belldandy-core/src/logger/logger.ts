@@ -126,10 +126,20 @@ export function createLogger(opts: LoggerOptions & { stateDir?: string }): Belld
   return logger;
 }
 
+
+function expandHome(filepath: string): string {
+  if (filepath.startsWith("~")) {
+    return path.join(os.homedir(), filepath.slice(1));
+  }
+  return filepath;
+}
+
 /** 从环境变量创建 Logger（用于 Gateway 启动） */
 export function createLoggerFromEnv(stateDir: string): BelldandyLogger {
   const level = process.env.BELLDANDY_LOG_LEVEL ?? "debug";
-  const logDir = process.env.BELLDANDY_LOG_DIR ?? path.join(stateDir, "logs");
+  let logDir = process.env.BELLDANDY_LOG_DIR ?? path.join(stateDir, "logs");
+  logDir = expandHome(logDir);
+
   const maxSizeStr = process.env.BELLDANDY_LOG_MAX_SIZE ?? "10MB";
   const maxRetentionDays = Number(process.env.BELLDANDY_LOG_RETENTION_DAYS ?? "7") || 7;
   const enableConsole = (process.env.BELLDANDY_LOG_CONSOLE ?? "true") !== "false";

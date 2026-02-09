@@ -43,6 +43,7 @@ export interface MemoryManagerOptions {
     localModel?: string;
     modelsDir?: string; // [NEW] Allow configuring models directory
     indexerOptions?: IndexerOptions;
+    embeddingBatchSize?: number;
 }
 
 export class MemoryManager {
@@ -50,6 +51,7 @@ export class MemoryManager {
     private indexer: MemoryIndexer;
     private embeddingProvider: EmbeddingProvider; // Renamed from embeddingModel
     private workspaceRoot: string;
+    private embeddingBatchSize: number;
 
     constructor(options: MemoryManagerOptions) {
         this.workspaceRoot = options.workspaceRoot;
@@ -85,6 +87,7 @@ export class MemoryManager {
         }
 
         this.indexer = new MemoryIndexer(this.store, options.indexerOptions);
+        this.embeddingBatchSize = options.embeddingBatchSize || 10;
     }
 
     /**
@@ -139,7 +142,7 @@ export class MemoryManager {
 
         // Loop until no more pending chunks
         while (true) {
-            const pending = this.store.getUnembeddedChunks(10); // Batch size 10
+            const pending = this.store.getUnembeddedChunks(this.embeddingBatchSize);
             if (pending.length === 0) break;
 
             console.log(`[MemoryManager] Processing ${pending.length} chunks for embedding...`);
