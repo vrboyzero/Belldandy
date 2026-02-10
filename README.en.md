@@ -2,8 +2,10 @@
 
 <p align="center">
   <strong>🌟 Local‑first personal AI assistant</strong><br>
-  Runs entirely on your own machine and talks to you through multiple channels.
+  Runs entirely on your own machine and talks to you through multiple channels.<br>
+  <span style="color:#ff4d4f;font-weight:bold;">[Important Notice] This project is under active development and testing. Use at your own risk and do not rely on it for production workloads or storing sensitive data.</span>
 </p>
+
 
 <p align="center">
   <a href="./README.md"><b>简体中文</b></a> |
