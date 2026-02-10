@@ -40,7 +40,8 @@ export class OpenAIChatAgent implements BelldandyAgent {
     yield { type: "status", status: "running" };
 
     try {
-      const messages = buildMessages(this.opts.systemPrompt, input.text, input.history);
+      const content = input.content || input.text;
+      const messages = buildMessages(this.opts.systemPrompt, content, input.history);
 
       // 使用容灾客户端发送请求
       const { response: res } = await this.failoverClient.fetchWithFailover({
@@ -116,10 +117,10 @@ export class OpenAIChatAgent implements BelldandyAgent {
 
 function buildMessages(
   systemPrompt: string | undefined,
-  userText: string,
-  history?: Array<{ role: "user" | "assistant"; content: string }>,
+  userContent: string | Array<any>, // using any to avoid circular dependency issues or just treating as opaque json
+  history?: Array<{ role: "user" | "assistant"; content: string | Array<any> }>,
 ) {
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [];
+  const messages: Array<{ role: "system" | "user" | "assistant"; content: any }> = [];
 
   // Layer 1: System
   if (systemPrompt && systemPrompt.trim()) {
@@ -132,7 +133,7 @@ function buildMessages(
   }
 
   // Layer 3: Current User Message
-  messages.push({ role: "user", content: userText });
+  messages.push({ role: "user", content: userContent });
 
   return messages;
 }

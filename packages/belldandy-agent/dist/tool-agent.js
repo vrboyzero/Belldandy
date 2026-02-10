@@ -32,7 +32,8 @@ export class ToolEnabledAgent {
         // 优先使用新版 hookRunner，向后兼容旧版 hooks
         if (this.opts.hookRunner) {
             try {
-                const hookRes = await this.opts.hookRunner.runBeforeAgentStart({ prompt: input.text, messages: input.history }, agentHookCtx);
+                const hookRes = await this.opts.hookRunner.runBeforeAgentStart({ prompt: typeof input.content === 'string' ? input.content : input.text, messages: input.history }, // TODO: Update hook types for multimodal
+                agentHookCtx);
                 if (hookRes) {
                     // 注入系统提示词前置上下文
                     if (hookRes.prependContext) {
@@ -63,7 +64,8 @@ export class ToolEnabledAgent {
             }
         }
         yield { type: "status", status: "running" };
-        const messages = buildInitialMessages(this.opts.systemPrompt, input.text, input.history);
+        const content = input.content || input.text;
+        const messages = buildInitialMessages(this.opts.systemPrompt, content, input.history);
         const tools = this.opts.toolExecutor.getDefinitions();
         let toolCallCount = 0;
         const generatedItems = [];
@@ -311,7 +313,7 @@ export class ToolEnabledAgent {
         }
     }
 }
-function buildInitialMessages(systemPrompt, userText, history) {
+function buildInitialMessages(systemPrompt, userContent, history) {
     const messages = [];
     // Layer 1: System
     if (systemPrompt?.trim()) {
@@ -328,7 +330,7 @@ function buildInitialMessages(systemPrompt, userText, history) {
         }
     }
     // Layer 3: Current User Message
-    messages.push({ role: "user", content: userText });
+    messages.push({ role: "user", content: userContent });
     return messages;
 }
 function buildUrl(baseUrl, endpoint) {

@@ -50,7 +50,7 @@ flowchart TB
 - **Phase 4 / 4.5 / 4.6**：Skills + Memory → Vector Memory → Session Persistence
 - **Phase 5**：SOUL / Persona 人格系统
 - **Phase 6 / 7**：飞书渠道、Heartbeat 定时任务
-- **Phase 8–10–11–12–13–13.5**：Moltbot 能力对标、浏览器扩展、系统执行、实时文件感知、向量加速、多媒体与视觉
+- **Phase 8–10–11–12–13–13.5–13.6**：Moltbot 能力对标、浏览器扩展、系统执行、实时文件感知、向量加速、多媒体与视觉、Kimi 原生视觉
 - **Phase 14**：方法论系统（自我进化）
 - **Phase 15**：渠道架构升级（Channel Architecture）
 - **Phase 16**：子 Agent 编排（规划中）
@@ -789,6 +789,16 @@ packages/belldandy-core/src/bin/
   - `add`/`change` -> 自动调用 `indexFile` 重新生成 Embedding (及 Keyword 索引)。
   - `unlink` -> 自动调用 `deleteBySource` 清理失效记忆。
 - **验证**：通过 `verify-watcher.mjs` 验证了文件增删改的毫秒级感知。
+
+### Phase 13.6: Kimi 原生视觉 (Native Multimodal Vision)
+- **Status**: ✅ 已完成 (2026-02-10)
+- **Goal**: 赋予 Agent "看懂" 用户上传图片的能力。
+- **Implementation**:
+    - **Interface**: 更新 `AgentRunInput` 支持 `content: Array<AgentContentPart>`。
+    - **Gateway**: 修改 `handleReq`，识别 `image/*` 附件并转换为 `data:image/...;base64` 格式。
+    - **Agent**: `OpenAIChatAgent` 优先通过 `image_url` 构造多模态消息。
+- **Validation**:
+    - 用户上传图片 -> Gateway 转换 -> Kimi 读取 -> 准确描述图片内容。
 
 ### Phase 10.5: OS 计算机操作能力 (OS Computer Use) [Proposed]
 - **Goal**: 赋予 Agent 像人一样操作操作系统的能力（看屏幕、动鼠标、敲键盘），突破浏览器限制。

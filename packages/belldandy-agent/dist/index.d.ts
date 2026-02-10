@@ -5,14 +5,32 @@ export { FailoverClient, loadModelFallbacks, classifyFailoverReason, isRetryable
 export { ensureWorkspace, loadWorkspaceFiles, needsBootstrap, createBootstrapFile, removeBootstrapFile, SOUL_FILENAME, IDENTITY_FILENAME, USER_FILENAME, BOOTSTRAP_FILENAME, AGENTS_FILENAME, TOOLS_FILENAME, HEARTBEAT_FILENAME, type WorkspaceFile, type WorkspaceFileName, type WorkspaceLoadResult, } from "./workspace.js";
 export { buildSystemPrompt, buildWorkspaceContext, type SystemPromptParams, } from "./system-prompt.js";
 export { ConversationStore, type Conversation, type ConversationMessage, type ConversationStoreOptions, } from "./conversation.js";
+export type AgentContentPart = {
+    type: "text";
+    text: string;
+} | {
+    type: "image_url";
+    image_url: {
+        url: string;
+    };
+};
 export type AgentRunInput = {
     conversationId: string;
+    /**
+     * Legacy text field. If `content` is provided, it takes precedence.
+     * If only `text` is provided, it will be treated as `{ type: "text", text }`.
+     */
     text: string;
+    /**
+     * Multimodal content parts (text, image, etc).
+     * Compatible with OpenAI's content array format.
+     */
+    content?: string | Array<AgentContentPart>;
     meta?: JsonObject;
     /** 对话历史（role 必须是 user 或 assistant） */
     history?: Array<{
         role: "user" | "assistant";
-        content: string;
+        content: string | Array<AgentContentPart>;
     }>;
 };
 export type AgentDelta = {

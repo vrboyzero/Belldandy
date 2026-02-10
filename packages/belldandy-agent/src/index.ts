@@ -49,12 +49,25 @@ export {
   type ConversationStoreOptions,
 } from "./conversation.js";
 
+export type AgentContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } }; // url format: "data:image/jpeg;base64,{base64_image}"
+
 export type AgentRunInput = {
   conversationId: string;
+  /**
+   * Legacy text field. If `content` is provided, it takes precedence.
+   * If only `text` is provided, it will be treated as `{ type: "text", text }`.
+   */
   text: string;
+  /**
+   * Multimodal content parts (text, image, etc).
+   * Compatible with OpenAI's content array format.
+   */
+  content?: string | Array<AgentContentPart>;
   meta?: JsonObject;
   /** 对话历史（role 必须是 user 或 assistant） */
-  history?: Array<{ role: "user" | "assistant"; content: string }>;
+  history?: Array<{ role: "user" | "assistant"; content: string | Array<AgentContentPart> }>;
 };
 
 export type AgentDelta = {

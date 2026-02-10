@@ -18,7 +18,8 @@ export class OpenAIChatAgent {
     async *run(input) {
         yield { type: "status", status: "running" };
         try {
-            const messages = buildMessages(this.opts.systemPrompt, input.text, input.history);
+            const content = input.content || input.text;
+            const messages = buildMessages(this.opts.systemPrompt, content, input.history);
             // 使用容灾客户端发送请求
             const { response: res } = await this.failoverClient.fetchWithFailover({
                 timeoutMs: this.opts.timeoutMs,
@@ -86,7 +87,8 @@ export class OpenAIChatAgent {
         }
     }
 }
-function buildMessages(systemPrompt, userText, history) {
+function buildMessages(systemPrompt, userContent, // using any to avoid circular dependency issues or just treating as opaque json
+history) {
     const messages = [];
     // Layer 1: System
     if (systemPrompt && systemPrompt.trim()) {
@@ -97,7 +99,7 @@ function buildMessages(systemPrompt, userText, history) {
         messages.push(...history);
     }
     // Layer 3: Current User Message
-    messages.push({ role: "user", content: userText });
+    messages.push({ role: "user", content: userContent });
     return messages;
 }
 function buildUrl(baseUrl, endpoint) {

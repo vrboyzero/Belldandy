@@ -373,6 +373,7 @@ async function handleReq(
       // Handle Attachments
       let promptText = parsed.value.text;
       const attachments = parsed.value.attachments as Array<{ name: string; type: string; base64: string }> | undefined;
+      const imageParts: Array<{ type: "image_url"; image_url: { url: string } }> = [];
 
       if (attachments && Array.isArray(attachments) && attachments.length > 0) {
         console.log("[Debug] Processing", attachments.length, "attachments...");
@@ -390,20 +391,31 @@ async function handleReq(
             const buffer = Buffer.from(att.base64, "base64");
             fs.writeFileSync(savePath, buffer);
 
-            const isText = att.type.startsWith("text/") ||
-              att.name.endsWith(".md") ||
-              att.name.endsWith(".json") ||
-              att.name.endsWith(".js") ||
-              att.name.endsWith(".ts") ||
-              att.name.endsWith(".txt") ||
-              att.name.endsWith(".log");
-
-            if (isText) {
-              const content = buffer.toString("utf-8");
-              const truncated = content.length > 50000 ? content.slice(0, 50000) + "\n...[Truncated]" : content;
-              attachmentPrompts.push(`\n\n--- Attachment: ${att.name} ---\n${truncated}\n--- End of Attachment ---\n`);
+            if (att.type.startsWith("image/")) {
+              // Image logic: Add to imageParts for vision model
+              imageParts.push({
+                type: "image_url",
+                image_url: { url: `data:${att.type};base64,${att.base64}` },
+              });
+              // Also add a note in text
+              attachmentPrompts.push(`\n[用户上传了图片: ${att.name}]`);
             } else {
-              attachmentPrompts.push(`\n[User uploaded a file: ${att.name} (type: ${att.type}), saved at: ${savePath}]`);
+              // Text/File logic
+              const isText = att.type.startsWith("text/") ||
+                att.name.endsWith(".md") ||
+                att.name.endsWith(".json") ||
+                att.name.endsWith(".js") ||
+                att.name.endsWith(".ts") ||
+                att.name.endsWith(".txt") ||
+                att.name.endsWith(".log");
+
+              if (isText) {
+                const content = buffer.toString("utf-8");
+                const truncated = content.length > 50000 ? content.slice(0, 50000) + "\n...[Truncated]" : content;
+                attachmentPrompts.push(`\n\n--- Attachment: ${att.name} ---\n${truncated}\n--- End of Attachment ---\n`);
+              } else {
+                attachmentPrompts.push(`\n[User uploaded a file: ${att.name} (type: ${att.type}), saved at: ${savePath}]`);
+              }
             }
           } catch (e) {
             console.error(`Failed to save attachment ${att.name}:`, e);
@@ -418,8 +430,17 @@ async function handleReq(
 
       void (async () => {
         try {
+          const runInput: any = { conversationId, text: promptText, history };
+          if (imageParts.length > 0) {
+            // Construct multimodal content
+            runInput.content = [
+              { type: "text", text: promptText },
+              ...imageParts
+            ];
+          }
+
           let fullResponse = "";
-          for await (const item of agent.run({ conversationId, text: promptText, history })) {
+          for await (const item of agent.run(runInput)) {
             if (item.type === "status") {
               sendEvent(ws, { type: "event", event: "agent.status", payload: { conversationId, status: item.status } });
             }
@@ -436,7 +457,9 @@ async function handleReq(
             ctx.conversationStore.addMessage(conversationId, "assistant", fullResponse);
           }
         } catch (err) {
+          console.error("Agent run failed:", err);
           sendEvent(ws, { type: "event", event: "agent.status", payload: { conversationId, status: "error" } });
+          sendEvent(ws, { type: "event", event: "chat.final", payload: { conversationId, text: `Error: ${String(err)}` } });
         }
       })();
 

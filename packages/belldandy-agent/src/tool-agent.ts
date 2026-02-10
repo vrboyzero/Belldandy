@@ -33,8 +33,8 @@ export type ToolEnabledAgentOptions = {
 
 type Message =
   | { role: "system"; content: string }
-  | { role: "user"; content: string }
-  | { role: "assistant"; content?: string; tool_calls?: OpenAIToolCall[] }
+  | { role: "user"; content: string | Array<any> }
+  | { role: "assistant"; content?: string | null; tool_calls?: OpenAIToolCall[] }
   | { role: "tool"; tool_call_id: string; content: string };
 
 type OpenAIToolCall = {
@@ -78,7 +78,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     if (this.opts.hookRunner) {
       try {
         const hookRes = await this.opts.hookRunner.runBeforeAgentStart(
-          { prompt: input.text, messages: input.history },
+          { prompt: typeof input.content === 'string' ? input.content : input.text, messages: input.history as any }, // TODO: Update hook types for multimodal
           agentHookCtx,
         );
         if (hookRes) {
@@ -110,7 +110,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
     yield { type: "status", status: "running" };
 
-    const messages: Message[] = buildInitialMessages(this.opts.systemPrompt, input.text, input.history);
+    const content = input.content || input.text;
+    const messages: Message[] = buildInitialMessages(this.opts.systemPrompt, content, input.history);
     const tools = this.opts.toolExecutor.getDefinitions();
     let toolCallCount = 0;
     const generatedItems: AgentStreamItem[] = [];
@@ -389,8 +390,8 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
 function buildInitialMessages(
   systemPrompt: string | undefined,
-  userText: string,
-  history?: Array<{ role: "user" | "assistant"; content: string }>,
+  userContent: string | Array<any>,
+  history?: Array<{ role: "user" | "assistant"; content: string | Array<any> }>,
 ): Message[] {
   const messages: Message[] = [];
 
@@ -405,13 +406,13 @@ function buildInitialMessages(
     // 复杂 tool history 暂不还原（保持无状态简单性）
     for (const msg of history) {
       if (msg.role === "user" || msg.role === "assistant") {
-        messages.push({ role: msg.role, content: msg.content });
+        messages.push({ role: msg.role, content: msg.content as any });
       }
     }
   }
 
   // Layer 3: Current User Message
-  messages.push({ role: "user", content: userText });
+  messages.push({ role: "user", content: userContent });
 
   return messages;
 }
