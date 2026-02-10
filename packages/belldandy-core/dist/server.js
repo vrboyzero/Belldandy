@@ -285,7 +285,7 @@ async function handleReq(ws, req, ctx) {
             // Handle Attachments
             let promptText = parsed.value.text;
             const attachments = parsed.value.attachments;
-            const imageParts = [];
+            const contentParts = []; // Changed from strictly typed imageParts to allow flexible content
             if (attachments && Array.isArray(attachments) && attachments.length > 0) {
                 console.log("[Debug] Processing", attachments.length, "attachments...");
                 const attachmentDir = path.join(ctx.stateDir, "storage", "attachments", conversationId);
@@ -300,13 +300,24 @@ async function handleReq(ws, req, ctx) {
                         const buffer = Buffer.from(att.base64, "base64");
                         fs.writeFileSync(savePath, buffer);
                         if (att.type.startsWith("image/")) {
-                            // Image logic: Add to imageParts for vision model
-                            imageParts.push({
+                            // Image logic: Add to contentParts for vision model
+                            contentParts.push({
                                 type: "image_url",
                                 image_url: { url: `data:${att.type};base64,${att.base64}` },
                             });
                             // Also add a note in text
                             attachmentPrompts.push(`\n[用户上传了图片: ${att.name}]`);
+                        }
+                        else if (att.type.startsWith("video/")) {
+                            // Video logic: Add to contentParts (by local file path)
+                            // Kimi API requires upload, so we pass the local path to the Agent
+                            // The Agent implementation (e.g. OpenAIChatAgent) will handle the upload.
+                            const absPath = path.resolve(savePath);
+                            contentParts.push({
+                                type: "video_url",
+                                video_url: { url: `file://${absPath}` },
+                            });
+                            attachmentPrompts.push(`\n[用户上传了视频: ${att.name}] (System Note: Video content has been injected via multimodal channel. Please analyze it directly.)`);
                         }
                         else {
                             // Text/File logic
@@ -339,11 +350,11 @@ async function handleReq(ws, req, ctx) {
             void (async () => {
                 try {
                     const runInput = { conversationId, text: promptText, history };
-                    if (imageParts.length > 0) {
+                    if (contentParts.length > 0) {
                         // Construct multimodal content
                         runInput.content = [
                             { type: "text", text: promptText },
-                            ...imageParts
+                            ...contentParts
                         ];
                     }
                     let fullResponse = "";

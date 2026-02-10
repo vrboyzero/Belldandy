@@ -75,12 +75,6 @@ BELLDANDY_OPENAI_MODEL=gemini-2.0-flash-exp
 BELLDANDY_AGENT_PROVIDER=mock
 ```
 
-### 3.2 进阶配置（可选）
-
-将以下变量添加到 `.env.local` 中，按需启用或修改：
-
-```env
-# ------ 网络与安全 ------
 # Gateway 服务端口（默认 28889）
 BELLDANDY_PORT=28889
 
@@ -222,6 +216,50 @@ BELLDANDY_MODEL_CONFIG_FILE=E:\\config\\my-models.json
     *   修改 **OpenAI API Key**、**Base URL**、**Model**。
     *   修改 **心跳间隔**。
 4.  点击 **Save**，系统会自动保存配置到 `.env.local` 并重启服务。
+
+### 3.6 视觉与视频理解 (New!)
+
+Belldandy 现在支持**图片**和**视频**的理解能力（需配置支持视觉的模型，如 Kimi k2.5）。
+
+#### 3.6.1 发送图片
+1. 点击聊天输入框左侧的 `+` 号（或附件按钮）。
+2. 选择本地图片文件（jpg, png, webp 等）。
+3. 在输入框中输入你的问题（例如：“这张图里有什么？”）。
+4. 发送消息，模型将能够“看到”图片并回答。
+
+#### 3.6.2 发送视频 (Kimi K2.5 专属)
+1. 同样点击附件按钮。
+2. 选择本地视频文件（mp4, mov, avi 等，建议 < 100MB）。
+3. 输入问题（例如："这个视频讲了什么故事？"）。
+4. 发送消息。
+   - **注意**：视频上传需要一定时间，界面会显示"上传视频中"的状态提示，请耐心等待。
+   - **原理**：Agent 会自动将视频上传到 Moonshot AI 的云端文件服务，获取文件 ID 后通过 `ms://` 协议引用，模型直接读取云端文件进行分析。
+   - **工具模式也支持**：无论是普通对话模式还是启用了工具调用（`BELLDANDY_TOOLS_ENABLED=true`）的模式，视频理解都能正常工作。
+
+#### 3.6.3 视频上传独立配置（高级）
+
+如果你的 AI 服务使用了代理/网关（如 API 中转站），而该代理不支持 Moonshot 的 `/files` 文件上传端点，你可以在 `models.json` 中为视频上传配置独立的直连地址：
+
+```json
+{
+  "videoUpload": {
+    "apiUrl": "https://api.moonshot.cn/v1",
+    "apiKey": "sk-your-moonshot-key"
+  },
+  "fallbacks": [...]
+}
+```
+
+这样，聊天请求走代理，视频上传直连 Moonshot，互不影响。
+
+#### 3.6.4 配置要求
+使用视觉能力前，请确保 `.env` 中配置了支持视觉的模型：
+```bash
+# 推荐配置 (Kimi K2.5)
+BELLDANDY_OPENAI_BASE_URL="https://api.moonshot.cn/v1"
+BELLDANDY_OPENAI_API_KEY="sk-xxxxxxxx"
+BELLDANDY_OPENAI_MODEL="kimi-k2.5-preview"
+```
 
 ## 4. 启动与运行
 

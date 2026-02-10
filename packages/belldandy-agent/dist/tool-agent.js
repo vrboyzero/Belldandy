@@ -4,6 +4,7 @@
  * 支持工具调用的 Agent 实现，集成完整的钩子系统。
  */
 import { FailoverClient } from "./failover-client.js";
+import { buildUrl, preprocessMultimodalContent } from "./multimodal.js";
 export class ToolEnabledAgent {
     opts;
     failoverClient;
@@ -64,7 +65,19 @@ export class ToolEnabledAgent {
             }
         }
         yield { type: "status", status: "running" };
-        const content = input.content || input.text;
+        let content = input.content || input.text;
+        // Preprocess: upload local videos to Moonshot
+        const needsVideoUpload = Array.isArray(content) &&
+            content.some((p) => p.type === "video_url" && p.video_url?.url?.startsWith("file://"));
+        if (needsVideoUpload) {
+            yield { type: "status", status: "uploading_video" };
+            const profiles = this.failoverClient.getProfiles();
+            const profile = profiles.find(p => p.id === "primary") || profiles[0];
+            if (profile) {
+                const result = await preprocessMultimodalContent(content, profile, this.opts.videoUploadConfig);
+                content = result.content;
+            }
+        }
         const messages = buildInitialMessages(this.opts.systemPrompt, content, input.history);
         const tools = this.opts.toolExecutor.getDefinitions();
         let toolCallCount = 0;
@@ -332,11 +345,6 @@ function buildInitialMessages(systemPrompt, userContent, history) {
     // Layer 3: Current User Message
     messages.push({ role: "user", content: userContent });
     return messages;
-}
-function buildUrl(baseUrl, endpoint) {
-    const trimmed = baseUrl.trim().replace(/\/+$/, "");
-    const base = /\/v\d+$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
-    return `${base}${endpoint}`;
 }
 function safeParseJson(str) {
     try {

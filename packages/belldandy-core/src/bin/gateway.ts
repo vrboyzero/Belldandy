@@ -12,6 +12,7 @@ import {
   ConversationStore,
   loadModelFallbacks,
   type ModelProfile,
+  type VideoUploadConfig,
 } from "@belldandy/agent";
 import {
   ToolExecutor,
@@ -247,6 +248,12 @@ const openaiSystemPrompt = readEnv("BELLDANDY_OPENAI_SYSTEM_PROMPT");
 const toolsEnabled = (readEnv("BELLDANDY_TOOLS_ENABLED") ?? "false") === "true";
 const agentTimeoutMsRaw = readEnv("BELLDANDY_AGENT_TIMEOUT_MS");
 const agentTimeoutMs = agentTimeoutMsRaw ? Math.max(5000, parseInt(agentTimeoutMsRaw, 10) || 120_000) : undefined;
+
+// Video File Upload (dedicated endpoint when chat proxy doesn't support /files)
+const videoFileApiUrl = readEnv("BELLDANDY_VIDEO_FILE_API_URL");
+const videoFileApiKey = readEnv("BELLDANDY_VIDEO_FILE_API_KEY");
+const videoUploadConfig: VideoUploadConfig | undefined =
+  videoFileApiUrl ? { apiUrl: videoFileApiUrl, apiKey: videoFileApiKey || openaiApiKey || "" } : undefined;
 
 // Model Failover
 const modelConfigFile = readEnv("BELLDANDY_MODEL_CONFIG_FILE")
@@ -494,6 +501,7 @@ Use the 'edge' provider by default for free, high-quality speech.`;
         ...(agentTimeoutMs !== undefined && { timeoutMs: agentTimeoutMs }),
         fallbacks: modelFallbacks.length > 0 ? modelFallbacks : undefined,
         failoverLogger: logger,
+        videoUploadConfig,
       });
     }
     return new OpenAIChatAgent({
@@ -504,6 +512,7 @@ Use the 'edge' provider by default for free, high-quality speech.`;
       systemPrompt: currentSystemPrompt,
       fallbacks: modelFallbacks.length > 0 ? modelFallbacks : undefined,
       failoverLogger: logger,
+      videoUploadConfig,
     });
   }
   : undefined;

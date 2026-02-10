@@ -51,7 +51,8 @@ export {
 
 export type AgentContentPart =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } }; // url format: "data:image/jpeg;base64,{base64_image}"
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "video_url"; video_url: { url: string } }; // url format: "data:image/jpeg;base64,{base64_image}"
 
 export type AgentRunInput = {
   conversationId: string;
@@ -145,3 +146,6 @@ function sleep(ms: number): Promise<void> {
 // 钩子系统
 export * from "./hooks.js";
 export { createHookRunner, type HookRunner, type HookRunnerLogger, type HookRunnerOptions } from "./hook-runner.js";
+
+// 多模态预处理（视频上传等）
+export { buildUrl, uploadFileToMoonshot, preprocessMultimodalContent, type PreprocessResult, type VideoUploadConfig } from "./multimodal.js";

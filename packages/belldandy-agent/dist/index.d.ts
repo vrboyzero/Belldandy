@@ -13,6 +13,11 @@ export type AgentContentPart = {
     image_url: {
         url: string;
     };
+} | {
+    type: "video_url";
+    video_url: {
+        url: string;
+    };
 };
 export type AgentRunInput = {
     conversationId: string;
@@ -68,4 +73,5 @@ export declare class MockAgent implements BelldandyAgent {
 }
 export * from "./hooks.js";
 export { createHookRunner, type HookRunner, type HookRunnerLogger, type HookRunnerOptions } from "./hook-runner.js";
+export { buildUrl, uploadFileToMoonshot, preprocessMultimodalContent, type PreprocessResult, type VideoUploadConfig } from "./multimodal.js";
 //# sourceMappingURL=index.d.ts.map

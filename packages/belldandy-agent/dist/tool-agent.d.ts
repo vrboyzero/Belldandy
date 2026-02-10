@@ -7,6 +7,7 @@ import type { ToolExecutor } from "@belldandy/skills";
 import type { AgentRunInput, AgentStreamItem, BelldandyAgent, AgentHooks } from "./index.js";
 import type { HookRunner } from "./hook-runner.js";
 import { type ModelProfile, type FailoverLogger } from "./failover-client.js";
+import { type VideoUploadConfig } from "./multimodal.js";
 export type ToolEnabledAgentOptions = {
     baseUrl: string;
     apiKey: string;
@@ -27,6 +28,8 @@ export type ToolEnabledAgentOptions = {
     fallbacks?: ModelProfile[];
     /** 容灾日志接口 */
     failoverLogger?: FailoverLogger;
+    /** 视频文件上传专用配置（当聊天代理不支持 /files 端点时） */
+    videoUploadConfig?: VideoUploadConfig;
 };
 export declare class ToolEnabledAgent implements BelldandyAgent {
     private readonly opts;

@@ -36,4 +36,6 @@ function sleep(ms) {
 // 钩子系统
 export * from "./hooks.js";
 export { createHookRunner } from "./hook-runner.js";
+// 多模态预处理（视频上传等）
+export { buildUrl, uploadFileToMoonshot, preprocessMultimodalContent } from "./multimodal.js";
 //# sourceMappingURL=index.js.map

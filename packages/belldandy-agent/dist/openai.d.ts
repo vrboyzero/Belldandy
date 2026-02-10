@@ -1,5 +1,6 @@
 import type { AgentRunInput, AgentStreamItem, BelldandyAgent } from "./index.js";
 import { type ModelProfile, type FailoverLogger } from "./failover-client.js";
+import { type VideoUploadConfig } from "./multimodal.js";
 export type OpenAIChatAgentOptions = {
     baseUrl: string;
     apiKey: string;
@@ -11,6 +12,8 @@ export type OpenAIChatAgentOptions = {
     fallbacks?: ModelProfile[];
     /** 容灾日志接口 */
     failoverLogger?: FailoverLogger;
+    /** 视频文件上传专用配置（当聊天代理不支持 /files 端点时） */
+    videoUploadConfig?: VideoUploadConfig;
 };
 export declare class OpenAIChatAgent implements BelldandyAgent {
     private readonly opts;

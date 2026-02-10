@@ -695,26 +695,29 @@ if (composerSection) {
 // 处理文件列表
 async function handleFiles(files) {
   const allowedTypes = {
-    image: [".jpg", ".jpeg", ".png", ".gif"],
-    text: [".txt", ".md", ".json", ".log"]
+    image: [".jpg", ".jpeg", ".png", ".gif", ".webp"],
+    video: [".mp4", ".mov", ".avi", ".webm", ".mkv"],
+    text: [".txt", ".md", ".json", ".log", ".js", ".ts", ".xml", ".html", ".css", ".csv"] // Added more text types
   };
 
   for (const file of files) {
     const ext = "." + file.name.split(".").pop().toLowerCase();
     const isImage = allowedTypes.image.includes(ext);
+    const isVideo = allowedTypes.video.includes(ext);
     const isText = allowedTypes.text.includes(ext);
 
-    if (!isImage && !isText) {
+    if (!isImage && !isVideo && !isText) {
       console.warn(`不支持的文件类型: ${file.name}`);
       continue;
     }
 
     try {
-      const content = await readFileContent(file, isImage);
+      // Images and Videos are read as Base64 Data URL
+      const content = await readFileContent(file, isImage || isVideo);
       pendingAttachments.push({
         name: file.name,
-        type: isImage ? "image" : "text",
-        mimeType: file.type || (isImage ? "image/png" : "text/plain"),
+        type: isImage ? "image" : (isVideo ? "video" : "text"),
+        mimeType: file.type || (isImage ? "image/png" : (isVideo ? "video/mp4" : "text/plain")),
         content
       });
     } catch (err) {
@@ -760,6 +763,18 @@ function renderAttachmentsPreview() {
       img.src = att.content;
       img.alt = att.name;
       item.appendChild(img);
+    } else if (att.type === "video") {
+      const icon = document.createElement("div");
+      icon.className = "file-icon video-icon";
+      icon.textContent = "🎬"; // Simple video icon
+      icon.style.fontSize = "24px";
+      item.appendChild(icon);
+    } else {
+      const icon = document.createElement("div");
+      icon.className = "file-icon text-icon";
+      icon.textContent = "📄";
+      icon.style.fontSize = "24px";
+      item.appendChild(icon);
     }
 
     const nameSpan = document.createElement("span");

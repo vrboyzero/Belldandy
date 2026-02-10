@@ -790,15 +790,41 @@ packages/belldandy-core/src/bin/
   - `unlink` -> 自动调用 `deleteBySource` 清理失效记忆。
 - **验证**：通过 `verify-watcher.mjs` 验证了文件增删改的毫秒级感知。
 
-### Phase 13.6: Kimi 原生视觉 (Native Multimodal Vision)
+### Phase 13.6: Kimi 原生视觉与视频 (Native Multimodal Vision & Video)
 - **Status**: ✅ 已完成 (2026-02-10)
-- **Goal**: 赋予 Agent "看懂" 用户上传图片的能力。
+- **Goal**: 赋予 Agent "看懂" 用户上传图片和视频的能力。
 - **Implementation**:
-    - **Interface**: 更新 `AgentRunInput` 支持 `content: Array<AgentContentPart>`。
-    - **Gateway**: 修改 `handleReq`，识别 `image/*` 附件并转换为 `data:image/...;base64` 格式。
-    - **Agent**: `OpenAIChatAgent` 优先通过 `image_url` 构造多模态消息。
+    - **Interface**: 更新 `AgentRunInput` 支持 `content: Array<AgentContentPart>` (text/image_url/video_url)。
+    - **Gateway**: 修改 `handleReq`，识别 `image/*` 附件转 Base64 DataURI，识别 `video/*` 附件存本地临时文件并生成 `file://` URL。
+    - **Shared Module** (`multimodal.ts`): 抽取共享的视频上传与多模态预处理逻辑，`OpenAIChatAgent` 和 `ToolEnabledAgent` 共用：
+      - `buildUrl(baseUrl, endpoint)`: 统一处理 baseUrl 是否已带 `/v1` 的 URL 拼接。
+      - `uploadFileToMoonshot(filePath, apiKey, baseUrl, purpose)`: 上传本地文件到 Moonshot `/files` 端点（100MB 限制，`purpose="video"`）。
+      - `preprocessMultimodalContent(content, profile, uploadOverride?)`: 扫描 content 数组，将 `file://` 视频上传后替换为 `ms://<file_id>` 协议 URL。
+    - **VideoUploadConfig**: 独立的上传配置（`apiUrl` + `apiKey`），解决代理不支持 `/files` 端点的问题，可直连 Moonshot API。
+    - **Agent 集成**: 两个 Agent 均在 `run()` 中检测 `video_url` + `file://` → yield `uploading_video` 状态 → 调用 `preprocessMultimodalContent` → 使用转换后的 `ms://` URL 发送请求。
+    - **容错**: 上传失败时降级为文本占位 `[Video: <path> (Upload Failed: <reason>)]`，不中断请求。
+- **修复链路**:
+    | 问题 | 修复 |
+    |------|------|
+    | ToolEnabledAgent 缺少视频上传逻辑 | 抽取共享 `multimodal.ts`，两个 Agent 共用 |
+    | 代理不支持 `/files` 端点 (404) | 新增 `VideoUploadConfig` 独立上传配置 |
+    | `purpose="file-extract"` 不支持视频 (400) | 改为 `purpose="video"` |
+    | `video_file` 不是合法 content part 类型 (400) | 改为 `video_url` + `ms://<file_id>` 协议 |
+    | 代理不支持多模态 content 数组 (422) | 直连 Moonshot，统一 URL + Key |
+- **File Structure**:
+    ```
+    packages/belldandy-agent/src/
+    ├── multimodal.ts       # [NEW] 共享视频上传 & 多模态预处理
+    ├── openai.ts           # [MODIFIED] 引用 multimodal.ts
+    ├── tool-agent.ts       # [MODIFIED] 引用 multimodal.ts（补齐视频逻辑）
+    └── index.ts            # [MODIFIED] 导出 multimodal 相关类型
+    ```
 - **Validation**:
-    - 用户上传图片 -> Gateway 转换 -> Kimi 读取 -> 准确描述图片内容。
+    - [x] 图片理解验证通过（Base64 DataURI 直传）。
+    - [x] 视频理解验证通过（`file://` → upload → `ms://` → Moonshot API）。
+    - [x] ToolEnabledAgent 视频理解验证通过（与 OpenAIChatAgent 共用 multimodal.ts）。
+    - [x] 验证脚本 `scripts/verify_kimi_video.ts` 逻辑验证通过。
+    - [x] 上传失败容错降级验证通过。
 
 ### Phase 10.5: OS 计算机操作能力 (OS Computer Use) [Proposed]
 - **Goal**: 赋予 Agent 像人一样操作操作系统的能力（看屏幕、动鼠标、敲键盘），突破浏览器限制。

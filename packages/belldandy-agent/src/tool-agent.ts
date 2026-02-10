@@ -10,6 +10,7 @@ import type { AgentRunInput, AgentStreamItem, BelldandyAgent, AgentHooks } from 
 import type { HookRunner } from "./hook-runner.js";
 import type { HookAgentContext, HookToolContext } from "./hooks.js";
 import { FailoverClient, type ModelProfile, type FailoverLogger } from "./failover-client.js";
+import { buildUrl, preprocessMultimodalContent, type VideoUploadConfig } from "./multimodal.js";
 
 export type ToolEnabledAgentOptions = {
   baseUrl: string;
@@ -29,6 +30,8 @@ export type ToolEnabledAgentOptions = {
   fallbacks?: ModelProfile[];
   /** 容灾日志接口 */
   failoverLogger?: FailoverLogger;
+  /** 视频文件上传专用配置（当聊天代理不支持 /files 端点时） */
+  videoUploadConfig?: VideoUploadConfig;
 };
 
 type Message =
@@ -110,7 +113,21 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
     yield { type: "status", status: "running" };
 
-    const content = input.content || input.text;
+    let content: string | Array<any> = input.content || input.text;
+
+    // Preprocess: upload local videos to Moonshot
+    const needsVideoUpload = Array.isArray(content) &&
+      content.some((p: any) => p.type === "video_url" && p.video_url?.url?.startsWith("file://"));
+    if (needsVideoUpload) {
+      yield { type: "status", status: "uploading_video" as any };
+      const profiles = this.failoverClient.getProfiles();
+      const profile = profiles.find(p => p.id === "primary") || profiles[0];
+      if (profile) {
+        const result = await preprocessMultimodalContent(content, profile, this.opts.videoUploadConfig);
+        content = result.content;
+      }
+    }
+
     const messages: Message[] = buildInitialMessages(this.opts.systemPrompt, content, input.history);
     const tools = this.opts.toolExecutor.getDefinitions();
     let toolCallCount = 0;
@@ -415,12 +432,6 @@ function buildInitialMessages(
   messages.push({ role: "user", content: userContent });
 
   return messages;
-}
-
-function buildUrl(baseUrl: string, endpoint: string): string {
-  const trimmed = baseUrl.trim().replace(/\/+$/, "");
-  const base = /\/v\d+$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
-  return `${base}${endpoint}`;
 }
 
 function safeParseJson(str: string): JsonObject {

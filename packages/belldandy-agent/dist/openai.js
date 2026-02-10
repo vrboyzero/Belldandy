@@ -1,4 +1,5 @@
 import { FailoverClient } from "./failover-client.js";
+import { buildUrl, preprocessMultimodalContent } from "./multimodal.js";
 export class OpenAIChatAgent {
     opts;
     failoverClient;
@@ -18,7 +19,19 @@ export class OpenAIChatAgent {
     async *run(input) {
         yield { type: "status", status: "running" };
         try {
-            const content = input.content || input.text;
+            let content = input.content || input.text;
+            // Preprocess: upload local videos to Moonshot
+            const needsVideoUpload = Array.isArray(content) &&
+                content.some((p) => p.type === "video_url" && p.video_url?.url?.startsWith("file://"));
+            if (needsVideoUpload) {
+                yield { type: "status", status: "uploading_video" };
+                const profiles = this.failoverClient.getProfiles();
+                const profile = profiles.find(p => p.id === "primary") || profiles[0];
+                if (profile) {
+                    const result = await preprocessMultimodalContent(content, profile, this.opts.videoUploadConfig);
+                    content = result.content;
+                }
+            }
             const messages = buildMessages(this.opts.systemPrompt, content, input.history);
             // 使用容灾客户端发送请求
             const { response: res } = await this.failoverClient.fetchWithFailover({
@@ -61,7 +74,7 @@ export class OpenAIChatAgent {
                 return;
             }
             let out = "";
-            for await (const item of parseSseStream(body)) {
+            for await (const item of parseSseStream(body)) { // cast body to any to satisfy ts if needed
                 if (item.type === "delta") {
                     out += item.delta;
                     yield item;
@@ -101,12 +114,6 @@ history) {
     // Layer 3: Current User Message
     messages.push({ role: "user", content: userContent });
     return messages;
-}
-function buildUrl(baseUrl, endpoint) {
-    const trimmed = baseUrl.trim().replace(/\/+$/, "");
-    // 已包含版本号路径（/v1, /v4 等）则不再追加
-    const base = /\/v\d+$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
-    return `${base}${endpoint}`;
 }
 async function safeReadText(res) {
     try {

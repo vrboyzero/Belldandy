@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__filesystem__directory_tree",
+      "Bash(ls:*)",
+      "mcp__filesystem__list_directory",
+      "WebFetch(domain:platform.moonshot.cn)",
+      "WebSearch",
+      "Bash(corepack pnpm install)",
+      "Bash(corepack pnpm build)",
+      "Bash(corepack pnpm test)",
+      "mcp__chrome-devtools__list_pages",
+      "mcp__chrome-devtools__navigate_page",
+      "mcp__chrome-devtools__take_snapshot"
+    ]
+  }
+}

@@ -213,6 +213,20 @@
     - **向后兼容**：未配置 `models.json` 时行为与之前完全一致。
 - **价值**：提升系统的鲁棒性，确保关键时刻 AI 不"掉链子"。多 Key 负载均衡 + 跨 Provider 降级双重保障。
 
+#### 9.5 Kimi K2.5 视觉/视频能力集成 (Vision & Video)
+- **状态**: ✅ 已完成 (2026-02-10)
+- **功能**:
+  - **图片理解**: 支持 WebChat 上传图片，Gateway 自动识别并转为 Base64 DataURI 发送给模型。
+  - **视频理解**: 支持 WebChat 上传视频 (mp4/mov 等)，Agent 自动上传至 Moonshot 文件服务并获取 file_id，通过 `ms://` 协议引用实现长视频理解。
+  - **多模态协议**: 升级 `AgentContentPart` 支持 `text`、`image_url` 和 `video_url` 三种类型。
+  - **共享模块**: 抽取 `multimodal.ts`，`OpenAIChatAgent` 和 `ToolEnabledAgent` 共用视频上传与预处理逻辑。
+- **技术细节**:
+  - `gateway`: 识别 `image/*` 和 `video/*` 附件，分别处理为 Base64 DataURI 和本地文件路径 (`file://`)。
+  - `multimodal.ts`: 共享模块，提供 `buildUrl`、`uploadFileToMoonshot`、`preprocessMultimodalContent` 三个核心函数。
+  - `VideoUploadConfig`: 独立上传配置，解决代理不支持 `/files` 端点的问题。
+  - **容错**: 上传失败降级为文本占位，不中断请求。
+  - **验证脚本**: 提供 `scripts/verify_kimi_video.ts` 用于独立验证视频上传与理解流程。
+
 ### 10. 性能与向量加速 (Vector Optimization) Phase 12
 
 - **目标**：引入 `sqlite-vec` 替换纯 JS 的向量计算，实现生产级性能。
@@ -246,20 +260,44 @@
     - **Agent Action**：Agent 使用 `browser_navigate` 打开页面，然后使用 `browser_screenshot` 获取视觉帧。
 - **价值**：无需引入复杂的 WebRTC 或流媒体协议，复用现有浏览器能力实现"看世界"。
 
-### 12.5 Kimi 原生视觉 (Native Multimodal Vision) Phase 13.6
+### 12.5 Kimi 原生视觉与视频 (Native Multimodal Vision & Video) Phase 13.6
 
-- **目标**：支持用户直接发送图片给 Agent，利用 Kimi K2.5 的多模态能力进行理解。
+- **目标**：支持用户直接发送图片和视频给 Agent，利用 Kimi K2.5 的多模态能力进行理解。
 - **状态**：✅ 已完成 (2026-02-10)
 - **实现内容**：
-    - **协议升级**：重构 `AgentRunInput` 接口，支持混合多模态内容（`Array<Text | ImageURL>`）。
-    - **透明传输**：Gateway (`server.ts`) 自动检测 MIME 类型，将图片附件转换为 Base64 `image_url` 对象。
+    - **协议升级**：重构 `AgentRunInput` 接口，支持混合多模态内容（`Array<Text | ImageURL | VideoURL>`）。
+    - **透明传输**：Gateway (`server.ts`) 自动检测 MIME 类型，将图片附件转换为 Base64 `image_url` 对象，将视频附件存为本地临时文件并生成 `file://` URL。
+    - **共享多模态模块** (`multimodal.ts`)：
+        - 抽取视频上传与内容预处理逻辑为独立模块，`OpenAIChatAgent` 和 `ToolEnabledAgent` 共用。
+        - `buildUrl(baseUrl, endpoint)`：统一处理 baseUrl 是否已带 `/v1` 的 URL 拼接。
+        - `uploadFileToMoonshot(filePath, apiKey, baseUrl, purpose)`：上传本地文件到 Moonshot `/files` 端点（100MB 限制，`purpose="video"`）。
+        - `preprocessMultimodalContent(content, profile, uploadOverride?)`：扫描 content 数组，将 `file://` 视频上传后替换为 `ms://<file_id>` 协议 URL。
+    - **VideoUploadConfig**：独立的上传配置（`apiUrl` + `apiKey`），解决代理/网关不支持 `/files` 端点的问题，可绕过代理直连 Moonshot API。
+    - **容错降级**：上传失败时替换为文本占位 `[Video: <path> (Upload Failed: <reason>)]`，不中断整个请求。
     - **混合兼容**：
-        - **图片**：作为视觉输入直接传给模型。
+        - **图片**：作为视觉输入直接传给模型（Base64 DataURI）。
+        - **视频**：`file://` 本地路径 → 上传 Moonshot → `ms://<file_id>` → 模型直接读取云端文件分析。
         - **文本/代码**：作为文本附件追加到 Prompt。
-        - **其他文件**：保持路径引用。
+- **修复链路**：
+    | 问题 | 修复 |
+    |------|------|
+    | ToolEnabledAgent 缺少视频上传逻辑 | 抽取共享 `multimodal.ts`，两个 Agent 共用 |
+    | 代理不支持 `/files` 端点 (404) | 新增 `VideoUploadConfig` 独立上传配置 |
+    | `purpose="file-extract"` 不支持视频 (400) | 改为 `purpose="video"` |
+    | `video_file` 不是合法 content part 类型 (400) | 改为 `video_url` + `ms://<file_id>` 协议 |
+    | 代理不支持多模态 content 数组 (422) | 直连 Moonshot，统一 URL + Key |
+- **文件结构**：
+    ```
+    packages/belldandy-agent/src/
+    ├── multimodal.ts       # [NEW] 共享视频上传 & 多模态预处理
+    ├── openai.ts           # [MODIFIED] 引用 multimodal.ts
+    ├── tool-agent.ts       # [MODIFIED] 引用 multimodal.ts（补齐视频逻辑）
+    └── index.ts            # [MODIFIED] 导出 multimodal 相关类型
+    ```
 - **价值**：
-    - **原生理解**：无需 OCR 中转，模型能直接理解梗图、UI 截图、图表细节。
-    - **交互升级**：用户可以“发图提问”，交互体验大幅提升。
+    - **原生理解**：无需 OCR 中转，模型能直接理解梗图、UI 截图、图表细节、视频内容。
+    - **交互升级**：用户可以"发图/发视频提问"，交互体验大幅提升。
+    - **DRY 架构**：两个 Agent 共享预处理逻辑，消除代码重复。
 
 ### 13. 方法论系统 (Methodology) Phase 14
 

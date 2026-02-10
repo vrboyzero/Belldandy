@@ -208,7 +208,7 @@ importers:
         specifier: ^5.0.4
         version: 5.0.6
       jsdom:
-        specifier: ^24.1.3
+        specifier: ^24.0.0
         version: 24.1.3
       node-edge-tts:
         specifier: ^1.2.9
@@ -223,7 +223,7 @@ importers:
         specifier: ^24.36.1
         version: 24.36.1
       turndown:
-        specifier: ^7.2.2
+        specifier: ^7.1.3
         version: 7.2.2
     devDependencies:
       '@types/node':
