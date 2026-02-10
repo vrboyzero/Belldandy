@@ -682,6 +682,68 @@ moltbot 通过 Workspace 引导文件体系实现 Agent 人格化：
 | **Phase 8** | **插件系统 (Plugin System)** | ✅ **已完成** <br> - **Phase 8.1 Core Hooks**: `AgentHooks` (`beforeRun`, `beforeToolCall`, `afterToolCall`, `afterRun`) <br> - **Phase 8.2 Plugin Registry**: 动态加载 `.js`/`.mjs` 插件，支持 Tool 注册与 Hook 聚合。 <br> - **Phase 8.3 Hook System Extension**: 13 种完整钩子 + HookRegistry + HookRunner + 优先级 + 多执行模式。 |
 | **Phase 9** | **浏览器扩展 (Browser Extension)** | ✅ **核心已完成** <br> - **Phase 9.1 Relay Server**: WebSocket 中继服务，Mock HTTP/CDP 协议，支持 Puppeteer 连接。 <br> - **Phase 9.2 Chrome Extension**: `chrome.debugger` 桥接，处理 `Target` 生命周期，自动附着。 <br> - **Phase 9.3 Integration**: 成功实现 Agent -> Relay -> Extension -> Page 的全链路控制。 |
 
+### Phase 8: Model Failover & High Availability [已完成]
+
+**目标**：实现类似 OpenClaw 的模型调用容灾机制，确保高可用性。
+
+**状态**：✅ 已完成 (2026-02-10)
+
+**已实现内容**：
+
+| Step | 内容 | 状态 |
+|------|------|------|
+| 1 | FailoverClient 核心类（错误分类 + Cooldown + 多 Profile 轮询） | ✅ 已完成 |
+| 2 | OpenAIChatAgent 集成（流式/非流式均走 FailoverClient） | ✅ 已完成 |
+| 3 | ToolEnabledAgent 集成（callModel 走 FailoverClient） | ✅ 已完成 |
+| 4 | Gateway 配置加载（models.json / BELLDANDY_MODEL_CONFIG_FILE） | ✅ 已完成 |
+
+**文件结构**：
+
+```
+packages/belldandy-agent/src/
+├── failover-client.ts   # [NEW] FailoverClient + CooldownManager + 错误分类 + 配置加载
+├── openai.ts            # [MODIFIED] 使用 FailoverClient.fetchWithFailover
+├── tool-agent.ts        # [MODIFIED] callModel 使用 FailoverClient
+└── index.ts             # [MODIFIED] 导出 FailoverClient 相关类型
+
+packages/belldandy-core/src/bin/
+└── gateway.ts           # [MODIFIED] 加载 models.json 并传入 fallbacks
+```
+
+**核心机制**：
+
+- **错误分类**: 429 (rate_limit) / 5xx (server_error) / 408 (timeout) → 触发 failover；400 (format) → 不可重试
+- **Cooldown**: rate_limit 冷却 2 分钟，billing (402) 冷却 10 分钟，其他 1 分钟
+- **向后兼容**: 不配置 `models.json` 时行为与之前完全一致
+
+**新增环境变量**：
+
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `BELLDANDY_MODEL_CONFIG_FILE` | 备用模型配置文件路径 | `~/.belldandy/models.json` |
+
+**配置格式** (`~/.belldandy/models.json`)：
+
+```json
+{
+  "fallbacks": [
+    {
+      "id": "deepseek-backup",
+      "baseUrl": "https://api.deepseek.com",
+      "apiKey": "sk-your-key",
+      "model": "deepseek-chat"
+    }
+  ]
+}
+```
+
+**验收用例**：
+- [x] 编译通过 (`pnpm run build`)
+- [x] 不配置 models.json 时行为不变（向后兼容）
+- [x] 主 Key 失败 (401/429/500) 后自动切换到备用 Profile
+- [x] 400 错误不触发 failover（直接返回错误）
+- [x] 日志清晰记录 failover 过程
+
 ### Phase 9: 浏览器扩展 (Browser Extension)（进行中）
 
 **目标**：实现对用户真实浏览器的接管与控制，复用登录态（Cookies/Local Storage）。

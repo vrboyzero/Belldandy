@@ -1,31 +1,45 @@
+import { FailoverClient } from "./failover-client.js";
 export class OpenAIChatAgent {
     opts;
+    failoverClient;
     constructor(opts) {
         this.opts = {
             ...opts,
             timeoutMs: opts.timeoutMs ?? 60_000,
             stream: opts.stream ?? true,
         };
+        // 初始化容灾客户端
+        this.failoverClient = new FailoverClient({
+            primary: { id: "primary", baseUrl: opts.baseUrl, apiKey: opts.apiKey, model: opts.model },
+            fallbacks: opts.fallbacks,
+            logger: opts.failoverLogger,
+        });
     }
     async *run(input) {
         yield { type: "status", status: "running" };
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), this.opts.timeoutMs);
         try {
-            const payload = {
-                model: this.opts.model,
-                messages: buildMessages(this.opts.systemPrompt, input.text, input.history),
-                stream: this.opts.stream,
-            };
-            const url = buildUrl(this.opts.baseUrl, "/chat/completions");
-            const res = await fetch(url, {
-                method: "POST",
-                headers: {
-                    "content-type": "application/json",
-                    authorization: `Bearer ${this.opts.apiKey}`,
+            const messages = buildMessages(this.opts.systemPrompt, input.text, input.history);
+            // 使用容灾客户端发送请求
+            const { response: res } = await this.failoverClient.fetchWithFailover({
+                timeoutMs: this.opts.timeoutMs,
+                buildRequest: (profile) => {
+                    const payload = {
+                        model: profile.model,
+                        messages,
+                        stream: this.opts.stream,
+                    };
+                    return {
+                        url: buildUrl(profile.baseUrl, "/chat/completions"),
+                        init: {
+                            method: "POST",
+                            headers: {
+                                "content-type": "application/json",
+                                authorization: `Bearer ${profile.apiKey}`,
+                            },
+                            body: JSON.stringify(payload),
+                        },
+                    };
                 },
-                body: JSON.stringify(payload),
-                signal: controller.signal,
             });
             if (!res.ok) {
                 const text = await safeReadText(res);
@@ -69,9 +83,6 @@ export class OpenAIChatAgent {
             const msg = err instanceof Error ? err.message : String(err);
             yield { type: "final", text: `模型调用异常：${msg}` };
             yield { type: "status", status: "error" };
-        }
-        finally {
-            clearTimeout(timer);
         }
     }
 }

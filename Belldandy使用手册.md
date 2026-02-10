@@ -144,7 +144,74 @@ BELLDANDY_TOOLS_POLICY_FILE=E:\project\belldandy\config\tools-policy.json
 BELLDANDY_EXTRA_WORKSPACE_ROOTS=E:\projects,D:\workspace
 ```
 
-### 3.4 可视化配置 (Settings UI)
+### 3.4 模型容灾配置 (Model Failover)
+
+当主模型因限流 (429)、余额不足 (402)、服务器故障 (5xx) 或超时等问题不可用时，Belldandy 可以 **自动切换到备用模型**，保证不中断服务。
+
+**快速开始**：在 `~/.belldandy/` 目录下创建 `models.json` 文件：
+
+```json
+{
+  "fallbacks": [
+    {
+      "id": "deepseek-backup",
+      "baseUrl": "https://api.deepseek.com",
+      "apiKey": "sk-your-deepseek-key",
+      "model": "deepseek-chat"
+    }
+  ]
+}
+```
+
+可在 `fallbacks` 数组中添加多个备用 Profile，系统会按顺序尝试。
+
+**配置说明**：
+
+| 字段 | 必填 | 说明 |
+|------|------|------|
+| `id` | 否 | 标识名称，用于日志显示（如 `deepseek-backup`） |
+| `baseUrl` | 是 | API 服务地址（OpenAI 协议兼容） |
+| `apiKey` | 是 | 该服务的 API Key |
+| `model` | 是 | 模型名称（如 `deepseek-chat`、`gpt-4o`） |
+
+**环境变量**：
+
+```env
+# 自定义配置文件路径（默认 ~/.belldandy/models.json）
+BELLDANDY_MODEL_CONFIG_FILE=E:\\config\\my-models.json
+```
+
+**工作原理**：
+
+1. 每次 AI 调用时，先尝试 `.env` 中的 **主模型**。
+2. 若主模型返回可重试错误（429/5xx/超时），自动切换到 `models.json` 中的 **第一个备用 Profile**。
+3. 若该备用也失败，继续尝试 **下一个备用**，直到成功或全部失败。
+4. 失败的 Profile 会进入 **冷却期**（限流 2 分钟，余额不足 10 分钟），冷却期间自动跳过。
+5. **不可重试错误**（如 400 请求格式错误）不会触发切换——因为换 Provider 也解决不了。
+
+**优先级顺序**：严格按 `fallbacks` 数组顺序，从上到下依次尝试：
+
+```
+.env 主模型 (Primary) → fallbacks[0] → fallbacks[1] → fallbacks[2] → ...
+```
+
+**多模型配置示例**：
+
+```json
+{
+  "fallbacks": [
+    { "id": "kimi-k2.5",     "baseUrl": "https://api.moonshot.cn/v1", "apiKey": "sk-...", "model": "kimi-k2.5" },
+    { "id": "deepseek-chat", "baseUrl": "https://api.deepseek.com",   "apiKey": "sk-...", "model": "deepseek-chat" },
+    { "id": "ollama-local",  "baseUrl": "http://127.0.0.1:11434/v1",  "apiKey": "ollama", "model": "llama3" }
+  ]
+}
+```
+
+> **⚡ Cooldown 机制**：已知故障的 Profile 会被标记冷却并自动跳过（不浪费时间重试），冷却结束后自动恢复参与轮询。
+
+> **💡 提示**：不创建 `models.json` 时，Belldandy 的行为与之前完全一致（仅使用 `.env` 中的单一配置），完全向后兼容。
+
+### 3.5 可视化配置 (Settings UI)
 
 如果你觉得编辑文本文件太麻烦，Belldandy 提供了全新的 Web 配置面板：
 

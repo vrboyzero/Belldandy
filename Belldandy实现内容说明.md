@@ -200,6 +200,19 @@
     - **Auto Cleanup**：文件删除时自动清理对应的 chunks 和 vectors。
 - **价值**：消除了 AI 记忆滞后的问题，特别是对于 Coding 场景，Agent 永远知道最新的代码状态。
 
+### 10. Model Failover & High Availability (Phase 8) [已完成]
+
+- **目标**：实现类似 OpenClaw 的模型调用容灾机制，确保高可用性。
+- **状态**：✅ 已完成 (2026-02-10)
+- **实现内容**：
+    - **FailoverClient**（`failover-client.ts`）：封装底层 HTTP 请求，内置错误分类 + Cooldown（熔断冷却）+ 多 Profile 自动轮询。
+    - **错误分类**：429/5xx/408/超时 → 触发 failover；400 → 不可重试直接返回。
+    - **Cooldown 策略**：rate_limit 冷却 2 分钟，billing (402) 冷却 10 分钟，其他 1 分钟。
+    - **Agent 集成**：`OpenAIChatAgent` 和 `ToolEnabledAgent` 均已接入 `FailoverClient.fetchWithFailover`。
+    - **配置加载**：Gateway 启动时自动从 `~/.belldandy/models.json`（或 `BELLDANDY_MODEL_CONFIG_FILE`）加载备用 Profile。
+    - **向后兼容**：未配置 `models.json` 时行为与之前完全一致。
+- **价值**：提升系统的鲁棒性，确保关键时刻 AI 不"掉链子"。多 Key 负载均衡 + 跨 Provider 降级双重保障。
+
 ### 10. 性能与向量加速 (Vector Optimization) Phase 12
 
 - **目标**：引入 `sqlite-vec` 替换纯 JS 的向量计算，实现生产级性能。

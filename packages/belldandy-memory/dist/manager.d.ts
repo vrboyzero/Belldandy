@@ -20,12 +20,14 @@ export interface MemoryManagerOptions {
     localModel?: string;
     modelsDir?: string;
     indexerOptions?: IndexerOptions;
+    embeddingBatchSize?: number;
 }
 export declare class MemoryManager {
     private store;
     private indexer;
     private embeddingProvider;
     private workspaceRoot;
+    private embeddingBatchSize;
     constructor(options: MemoryManagerOptions);
     /**
      * Index files in the workspace

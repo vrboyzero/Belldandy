@@ -10,6 +10,8 @@ import {
   loadWorkspaceFiles,
   buildSystemPrompt,
   ConversationStore,
+  loadModelFallbacks,
+  type ModelProfile,
 } from "@belldandy/agent";
 import {
   ToolExecutor,
@@ -246,6 +248,19 @@ const toolsEnabled = (readEnv("BELLDANDY_TOOLS_ENABLED") ?? "false") === "true";
 const agentTimeoutMsRaw = readEnv("BELLDANDY_AGENT_TIMEOUT_MS");
 const agentTimeoutMs = agentTimeoutMsRaw ? Math.max(5000, parseInt(agentTimeoutMsRaw, 10) || 120_000) : undefined;
 
+// Model Failover
+const modelConfigFile = readEnv("BELLDANDY_MODEL_CONFIG_FILE")
+  ?? path.join(stateDir, "models.json");
+let modelFallbacks: ModelProfile[] = [];
+try {
+  modelFallbacks = await loadModelFallbacks(modelConfigFile);
+  if (modelFallbacks.length > 0) {
+    logger.info("failover", `加载了 ${modelFallbacks.length} 个备用模型 Profile (from ${modelConfigFile})`);
+  }
+} catch (err) {
+  logger.warn("failover", `加载备用模型配置失败: ${String(err)}`);
+}
+
 // MCP
 const mcpEnabled = (readEnv("BELLDANDY_MCP_ENABLED") ?? "false") === "true";
 
@@ -477,6 +492,8 @@ Use the 'edge' provider by default for free, high-quality speech.`;
         toolExecutor: toolExecutor,
         logger,
         ...(agentTimeoutMs !== undefined && { timeoutMs: agentTimeoutMs }),
+        fallbacks: modelFallbacks.length > 0 ? modelFallbacks : undefined,
+        failoverLogger: logger,
       });
     }
     return new OpenAIChatAgent({
@@ -485,6 +502,8 @@ Use the 'edge' provider by default for free, high-quality speech.`;
       model: openaiModel!,
       stream: openaiStream,
       systemPrompt: currentSystemPrompt,
+      fallbacks: modelFallbacks.length > 0 ? modelFallbacks : undefined,
+      failoverLogger: logger,
     });
   }
   : undefined;

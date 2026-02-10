@@ -6,6 +6,7 @@
 import type { ToolExecutor } from "@belldandy/skills";
 import type { AgentRunInput, AgentStreamItem, BelldandyAgent, AgentHooks } from "./index.js";
 import type { HookRunner } from "./hook-runner.js";
+import { type ModelProfile, type FailoverLogger } from "./failover-client.js";
 export type ToolEnabledAgentOptions = {
     baseUrl: string;
     apiKey: string;
@@ -22,9 +23,14 @@ export type ToolEnabledAgentOptions = {
     logger?: {
         error(module: string, msg: string, data?: unknown): void;
     };
+    /** 备用 Profile 列表（模型容灾） */
+    fallbacks?: ModelProfile[];
+    /** 容灾日志接口 */
+    failoverLogger?: FailoverLogger;
 };
 export declare class ToolEnabledAgent implements BelldandyAgent {
     private readonly opts;
+    private readonly failoverClient;
     constructor(opts: ToolEnabledAgentOptions);
     run(input: AgentRunInput): AsyncIterable<AgentStreamItem>;
     private callModel;

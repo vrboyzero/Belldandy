@@ -9,6 +9,7 @@ import type { ToolExecutor, ToolCallRequest } from "@belldandy/skills";
 import type { AgentRunInput, AgentStreamItem, BelldandyAgent, AgentHooks } from "./index.js";
 import type { HookRunner } from "./hook-runner.js";
 import type { HookAgentContext, HookToolContext } from "./hooks.js";
+import { FailoverClient, type ModelProfile, type FailoverLogger } from "./failover-client.js";
 
 export type ToolEnabledAgentOptions = {
   baseUrl: string;
@@ -24,6 +25,10 @@ export type ToolEnabledAgentOptions = {
   hookRunner?: HookRunner;
   /** 可选：统一 Logger，用于钩子失败等日志 */
   logger?: { error(module: string, msg: string, data?: unknown): void };
+  /** 备用 Profile 列表（模型容灾） */
+  fallbacks?: ModelProfile[];
+  /** 容灾日志接口 */
+  failoverLogger?: FailoverLogger;
 };
 
 type Message =
@@ -41,6 +46,7 @@ type OpenAIToolCall = {
 export class ToolEnabledAgent implements BelldandyAgent {
   private readonly opts: Required<Pick<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls">> &
     Omit<ToolEnabledAgentOptions, "timeoutMs" | "maxToolCalls">;
+  private readonly failoverClient: FailoverClient;
 
   constructor(opts: ToolEnabledAgentOptions) {
     this.opts = {
@@ -48,6 +54,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
       timeoutMs: opts.timeoutMs ?? 120_000,
       maxToolCalls: opts.maxToolCalls ?? 10,
     };
+
+    // 初始化容灾客户端
+    this.failoverClient = new FailoverClient({
+      primary: { id: "primary", baseUrl: opts.baseUrl, apiKey: opts.apiKey, model: opts.model },
+      fallbacks: opts.fallbacks,
+      logger: opts.failoverLogger,
+    });
   }
 
   async *run(input: AgentRunInput): AsyncIterable<AgentStreamItem> {
@@ -313,12 +326,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
     messages: Message[],
     tools?: { type: "function"; function: { name: string; description: string; parameters: object } }[]
   ): Promise<{ ok: true; content: string; toolCalls?: OpenAIToolCall[] } | { ok: false; error: string }> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.opts.timeoutMs);
-
     try {
       const payload: Record<string, unknown> = {
-        model: this.opts.model,
+        model: "__PLACEHOLDER__", // 将由 buildRequest 覆盖
         messages,
         stream: false, // 工具调用模式使用非流式简化解析
       };
@@ -331,15 +341,24 @@ export class ToolEnabledAgent implements BelldandyAgent {
         payload.thinking = { type: "disabled" };
       }
 
-      const url = buildUrl(this.opts.baseUrl, "/chat/completions");
-      const res = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          authorization: `Bearer ${this.opts.apiKey}`,
+      // 使用容灾客户端发送请求
+      const { response: res } = await this.failoverClient.fetchWithFailover({
+        timeoutMs: this.opts.timeoutMs,
+        buildRequest: (profile) => {
+          // 替换占位符为实际 profile 的模型名
+          const actualPayload = { ...payload, model: profile.model };
+          return {
+            url: buildUrl(profile.baseUrl, "/chat/completions"),
+            init: {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                authorization: `Bearer ${profile.apiKey}`,
+              },
+              body: JSON.stringify(actualPayload),
+            },
+          };
         },
-        body: JSON.stringify(payload),
-        signal: controller.signal,
       });
 
       if (!res.ok) {
@@ -364,8 +383,6 @@ export class ToolEnabledAgent implements BelldandyAgent {
         return { ok: false, error: `模型调用超时（${this.opts.timeoutMs}ms）` };
       }
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
-    } finally {
-      clearTimeout(timer);
     }
   }
 }

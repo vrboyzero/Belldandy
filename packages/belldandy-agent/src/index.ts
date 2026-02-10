@@ -3,6 +3,20 @@ import type { JsonObject } from "@belldandy/protocol";
 export { OpenAIChatAgent, type OpenAIChatAgentOptions } from "./openai.js";
 export { ToolEnabledAgent, type ToolEnabledAgentOptions } from "./tool-agent.js";
 
+// Failover（模型容灾）
+export {
+  FailoverClient,
+  loadModelFallbacks,
+  classifyFailoverReason,
+  isRetryableReason,
+  type ModelProfile,
+  type FailoverReason,
+  type FailoverAttempt,
+  type FailoverResult,
+  type FailoverLogger,
+  type ModelConfigFile,
+} from "./failover-client.js";
+
 // Workspace & System Prompt (SOUL/Persona)
 export {
   ensureWorkspace,

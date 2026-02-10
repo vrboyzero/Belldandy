@@ -1,13 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { OpenAIChatAgent, ToolEnabledAgent, ensureWorkspace, loadWorkspaceFiles, buildSystemPrompt, ConversationStore, } from "@belldandy/agent";
-import { ToolExecutor, DEFAULT_POLICY, fetchTool, applyPatchTool, fileReadTool, fileWriteTool, fileDeleteTool, listFilesTool, createMemorySearchTool, createMemoryGetTool, browserOpenTool, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserGetContentTool, cameraSnapTool, imageGenerateTool, textToSpeechTool, runCommandTool, methodListTool, methodReadTool, methodCreateTool, methodSearchTool, logReadTool, logSearchTool, } from "@belldandy/skills";
+import { OpenAIChatAgent, ToolEnabledAgent, ensureWorkspace, loadWorkspaceFiles, buildSystemPrompt, ConversationStore, loadModelFallbacks, } from "@belldandy/agent";
+import { ToolExecutor, DEFAULT_POLICY, fetchTool, applyPatchTool, fileReadTool, fileWriteTool, fileDeleteTool, listFilesTool, createMemorySearchTool, createMemoryGetTool, browserOpenTool, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserGetContentTool, cameraSnapTool, imageGenerateTool, textToSpeechTool, runCommandTool, methodListTool, methodReadTool, methodCreateTool, methodSearchTool, logReadTool, logSearchTool, createCronTool, } from "@belldandy/skills";
 import { MemoryStore, MemoryIndexer, listMemoryFiles, ensureMemoryDir } from "@belldandy/memory";
 import { RelayServer } from "@belldandy/browser";
 import { FeishuChannel } from "@belldandy/channels";
 import { startGatewayServer } from "../server.js";
 import { startHeartbeatRunner } from "../heartbeat/index.js";
+import { CronStore, startCronScheduler } from "../cron/index.js";
 import { initMCPIntegration, registerMCPToolsToExecutor, printMCPStatus, } from "../mcp/index.js";
 import { createLoggerFromEnv } from "../logger/index.js";
 // --- Env Loading ---
@@ -63,6 +64,8 @@ const feishuAppSecret = readEnv("BELLDANDY_FEISHU_APP_SECRET");
 const heartbeatEnabled = readEnv("BELLDANDY_HEARTBEAT_ENABLED") === "true";
 const heartbeatIntervalRaw = readEnv("BELLDANDY_HEARTBEAT_INTERVAL") ?? "30m";
 const heartbeatActiveHoursRaw = readEnv("BELLDANDY_HEARTBEAT_ACTIVE_HOURS"); // e.g. "08:00-23:00"
+// Cron 定时任务
+const cronEnabled = readEnv("BELLDANDY_CRON_ENABLED") === "true";
 // State & Memory
 const defaultStateDir = path.join(os.homedir(), ".belldandy");
 const stateDir = readEnv("BELLDANDY_STATE_DIR") ?? defaultStateDir;
@@ -180,6 +183,19 @@ const openaiSystemPrompt = readEnv("BELLDANDY_OPENAI_SYSTEM_PROMPT");
 const toolsEnabled = (readEnv("BELLDANDY_TOOLS_ENABLED") ?? "false") === "true";
 const agentTimeoutMsRaw = readEnv("BELLDANDY_AGENT_TIMEOUT_MS");
 const agentTimeoutMs = agentTimeoutMsRaw ? Math.max(5000, parseInt(agentTimeoutMsRaw, 10) || 120_000) : undefined;
+// Model Failover
+const modelConfigFile = readEnv("BELLDANDY_MODEL_CONFIG_FILE")
+    ?? path.join(stateDir, "models.json");
+let modelFallbacks = [];
+try {
+    modelFallbacks = await loadModelFallbacks(modelConfigFile);
+    if (modelFallbacks.length > 0) {
+        logger.info("failover", `加载了 ${modelFallbacks.length} 个备用模型 Profile (from ${modelConfigFile})`);
+    }
+}
+catch (err) {
+    logger.warn("failover", `加载备用模型配置失败: ${String(err)}`);
+}
 // MCP
 const mcpEnabled = (readEnv("BELLDANDY_MCP_ENABLED") ?? "false") === "true";
 // --- Activity Tracking ---
@@ -245,6 +261,9 @@ if (embeddingEnabled && !openaiApiKey) {
 }
 // [SECURITY] 危险工具需显式启用
 const dangerousToolsEnabled = readEnv("BELLDANDY_DANGEROUS_TOOLS_ENABLED") === "true";
+// Cron Store（无论是否启用调度器，工具都可以管理任务）
+const cronStore = new CronStore(stateDir);
+let cronSchedulerHandle;
 // 3. Init Executor (conditional)
 const toolsToRegister = toolsEnabled
     ? [
@@ -273,6 +292,8 @@ const toolsToRegister = toolsEnabled
         methodSearchTool,
         logReadTool,
         logSearchTool,
+        // Cron 定时任务管理工具（始终注册，调度器可独立启停）
+        createCronTool({ store: cronStore, scheduler: { status: () => cronSchedulerHandle?.status() ?? { running: false, activeRuns: 0 } } }),
     ]
     : [];
 const toolExecutor = new ToolExecutor({
@@ -381,6 +402,8 @@ Use the 'edge' provider by default for free, high-quality speech.`;
                 toolExecutor: toolExecutor,
                 logger,
                 ...(agentTimeoutMs !== undefined && { timeoutMs: agentTimeoutMs }),
+                fallbacks: modelFallbacks.length > 0 ? modelFallbacks : undefined,
+                failoverLogger: logger,
             });
         }
         return new OpenAIChatAgent({
@@ -389,6 +412,8 @@ Use the 'edge' provider by default for free, high-quality speech.`;
             model: openaiModel,
             stream: openaiStream,
             systemPrompt: currentSystemPrompt,
+            fallbacks: modelFallbacks.length > 0 ? modelFallbacks : undefined,
+            failoverLogger: logger,
         });
     }
     : undefined;
@@ -586,7 +611,71 @@ if (heartbeatEnabled && createAgent) {
 else if (heartbeatEnabled && !createAgent) {
     logger.warn("heartbeat", "enabled but no Agent configured (provider not openai?), skipping.");
 }
-// 11. Start Browser Relay (if configured)
+// 11. Start Cron Scheduler (if configured)
+if (cronEnabled && createAgent) {
+    try {
+        const cronAgent = createAgent();
+        const activeHours = parseActiveHours(heartbeatActiveHoursRaw); // 复用 Heartbeat 活跃时段
+        // 复用 Heartbeat 的 sendMessage / deliverToUser 模式
+        const cronSendMessage = async (prompt) => {
+            let result = "";
+            for await (const item of cronAgent.run({
+                conversationId: `cron-${Date.now()}`,
+                text: prompt,
+            })) {
+                if (item.type === "delta") {
+                    result += item.delta;
+                }
+                else if (item.type === "final") {
+                    result = item.text;
+                }
+            }
+            return result;
+        };
+        const cronDeliverToUser = async (message) => {
+            // 1. Broadcast 到 WebChat
+            server.broadcast({
+                type: "event",
+                event: "chat.final",
+                payload: {
+                    conversationId: "cron-broadcast",
+                    text: message,
+                },
+            });
+            // 2. 推送到飞书（如果配置了）
+            if (feishuChannel) {
+                logger.info("cron", "Delivering to user via Feishu...");
+                const sent = await feishuChannel.sendProactiveMessage(message);
+                if (!sent) {
+                    logger.warn("cron", "Failed to deliver: No active Feishu chat session.");
+                }
+            }
+            else {
+                logger.info("cron", "Broadcasted to local Web clients (Feishu disabled).");
+            }
+        };
+        cronSchedulerHandle = startCronScheduler({
+            store: cronStore,
+            sendMessage: cronSendMessage,
+            deliverToUser: cronDeliverToUser,
+            activeHours,
+            timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+            isBusy,
+            log: (msg) => logger.info("cron", msg),
+        });
+        logger.info("cron", `scheduler enabled (activeHours=${heartbeatActiveHoursRaw ?? "all"})`);
+    }
+    catch (e) {
+        logger.warn("cron", "Agent creation failed, skipping Cron scheduler startup.");
+    }
+}
+else if (cronEnabled && !createAgent) {
+    logger.warn("cron", "enabled but no Agent configured, skipping.");
+}
+else {
+    logger.info("cron", "scheduler disabled (set BELLDANDY_CRON_ENABLED=true to enable)");
+}
+// 12. Start Browser Relay (if configured)
 const browserRelayEnabled = readEnv("BELLDANDY_BROWSER_RELAY_ENABLED") === "true";
 const browserRelayPort = Number(readEnv("BELLDANDY_RELAY_PORT") ?? "28892");
 if (browserRelayEnabled) {
@@ -597,5 +686,46 @@ if (browserRelayEnabled) {
     }).catch((err) => {
         logger.error("browser-relay", "Relay Error", err);
     });
+}
+// 12. 监听 .env / .env.local 文件变更，自动触发重启
+// 配合 launcher.ts 使用：exit(100) 会被 launcher 捕获并重新启动 gateway
+{
+    const ENV_FILES = [
+        path.join(process.cwd(), ".env"),
+        path.join(process.cwd(), ".env.local"),
+    ];
+    const DEBOUNCE_MS = 1500; // 防抖间隔，避免保存时多次触发
+    let restartTimer = null;
+    const triggerRestart = (filePath) => {
+        if (restartTimer)
+            clearTimeout(restartTimer);
+        restartTimer = setTimeout(() => {
+            const fileName = path.basename(filePath);
+            logger.info("config-watcher", `检测到 ${fileName} 变更，正在重启服务...`);
+            // 广播通知所有 WebSocket 客户端
+            server.broadcast({
+                type: "event",
+                event: "agent.status",
+                payload: { status: "restarting", reason: `${fileName} changed` },
+            });
+            // 延迟 300ms 让广播发出后再退出
+            setTimeout(() => process.exit(100), 300);
+        }, DEBOUNCE_MS);
+    };
+    for (const envFile of ENV_FILES) {
+        try {
+            if (fs.existsSync(envFile)) {
+                fs.watch(envFile, (eventType) => {
+                    if (eventType === "change") {
+                        triggerRestart(envFile);
+                    }
+                });
+                logger.info("config-watcher", `监听 ${path.basename(envFile)} 变更`);
+            }
+        }
+        catch {
+            // 文件不存在或无权监听 → 跳过（不阻塞启动）
+        }
+    }
 }
 //# sourceMappingURL=gateway.js.map

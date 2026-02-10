@@ -1,5 +1,7 @@
 export { OpenAIChatAgent } from "./openai.js";
 export { ToolEnabledAgent } from "./tool-agent.js";
+// Failover（模型容灾）
+export { FailoverClient, loadModelFallbacks, classifyFailoverReason, isRetryableReason, } from "./failover-client.js";
 // Workspace & System Prompt (SOUL/Persona)
 export { ensureWorkspace, loadWorkspaceFiles, needsBootstrap, createBootstrapFile, removeBootstrapFile, SOUL_FILENAME, IDENTITY_FILENAME, USER_FILENAME, BOOTSTRAP_FILENAME, AGENTS_FILENAME, TOOLS_FILENAME, HEARTBEAT_FILENAME, } from "./workspace.js";
 export { buildSystemPrompt, buildWorkspaceContext, } from "./system-prompt.js";

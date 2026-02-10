@@ -11,6 +11,8 @@ export { imageGenerateTool, textToSpeechTool, cameraSnapTool } from "./builtin/m
 export { sessionsSpawnTool, sessionsHistoryTool } from "./builtin/session/index.js";
 export { methodListTool, methodReadTool, methodCreateTool, methodSearchTool } from "./builtin/methodology/index.js";
 export { logReadTool, logSearchTool } from "./builtin/log.js";
+// 定时任务工具
+export { createCronTool } from "./builtin/cron-tool.js";
 // 浏览器控制工具
 export { browserOpenTool, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserGetContentTool, browserSnapshotTool, } from "./builtin/browser/tools.js";
 export { createMemorySearchTool, createMemoryGetTool } from "./builtin/memory.js";

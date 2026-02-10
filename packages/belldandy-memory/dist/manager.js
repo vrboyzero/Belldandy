@@ -28,6 +28,7 @@ export class MemoryManager {
     indexer;
     embeddingProvider; // Renamed from embeddingModel
     workspaceRoot;
+    embeddingBatchSize;
     constructor(options) {
         this.workspaceRoot = options.workspaceRoot;
         // Default store path: .belldandy/memory.sqlite
@@ -59,6 +60,7 @@ export class MemoryManager {
             console.log(`[MemoryManager] Using OpenAI Embedding Provider (${options.openaiModel || "text-embedding-3-small"})`);
         }
         this.indexer = new MemoryIndexer(this.store, options.indexerOptions);
+        this.embeddingBatchSize = options.embeddingBatchSize || 10;
     }
     /**
      * Index files in the workspace
@@ -108,7 +110,7 @@ export class MemoryManager {
         this.store.prepareVectorStore(dims);
         // Loop until no more pending chunks
         while (true) {
-            const pending = this.store.getUnembeddedChunks(10); // Batch size 10
+            const pending = this.store.getUnembeddedChunks(this.embeddingBatchSize);
             if (pending.length === 0)
                 break;
             console.log(`[MemoryManager] Processing ${pending.length} chunks for embedding...`);

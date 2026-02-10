@@ -3,14 +3,22 @@
  *
  * 支持工具调用的 Agent 实现，集成完整的钩子系统。
  */
+import { FailoverClient } from "./failover-client.js";
 export class ToolEnabledAgent {
     opts;
+    failoverClient;
     constructor(opts) {
         this.opts = {
             ...opts,
             timeoutMs: opts.timeoutMs ?? 120_000,
             maxToolCalls: opts.maxToolCalls ?? 10,
         };
+        // 初始化容灾客户端
+        this.failoverClient = new FailoverClient({
+            primary: { id: "primary", baseUrl: opts.baseUrl, apiKey: opts.apiKey, model: opts.model },
+            fallbacks: opts.fallbacks,
+            logger: opts.failoverLogger,
+        });
     }
     async *run(input) {
         const startTime = Date.now();
@@ -249,11 +257,9 @@ export class ToolEnabledAgent {
         }
     }
     async callModel(messages, tools) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), this.opts.timeoutMs);
         try {
             const payload = {
-                model: this.opts.model,
+                model: "__PLACEHOLDER__", // 将由 buildRequest 覆盖
                 messages,
                 stream: false, // 工具调用模式使用非流式简化解析
             };
@@ -264,15 +270,24 @@ export class ToolEnabledAgent {
                 // https://platform.moonshot.cn/docs/api/chat
                 payload.thinking = { type: "disabled" };
             }
-            const url = buildUrl(this.opts.baseUrl, "/chat/completions");
-            const res = await fetch(url, {
-                method: "POST",
-                headers: {
-                    "content-type": "application/json",
-                    authorization: `Bearer ${this.opts.apiKey}`,
+            // 使用容灾客户端发送请求
+            const { response: res } = await this.failoverClient.fetchWithFailover({
+                timeoutMs: this.opts.timeoutMs,
+                buildRequest: (profile) => {
+                    // 替换占位符为实际 profile 的模型名
+                    const actualPayload = { ...payload, model: profile.model };
+                    return {
+                        url: buildUrl(profile.baseUrl, "/chat/completions"),
+                        init: {
+                            method: "POST",
+                            headers: {
+                                "content-type": "application/json",
+                                authorization: `Bearer ${profile.apiKey}`,
+                            },
+                            body: JSON.stringify(actualPayload),
+                        },
+                    };
                 },
-                body: JSON.stringify(payload),
-                signal: controller.signal,
             });
             if (!res.ok) {
                 const text = await safeReadText(res);
@@ -293,9 +308,6 @@ export class ToolEnabledAgent {
                 return { ok: false, error: `模型调用超时（${this.opts.timeoutMs}ms）` };
             }
             return { ok: false, error: err instanceof Error ? err.message : String(err) };
-        }
-        finally {
-            clearTimeout(timer);
         }
     }
 }
