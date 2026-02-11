@@ -44,6 +44,7 @@ import {
   logReadTool,
   logSearchTool,
   createCronTool,
+  createServiceRestartTool,
 } from "@belldandy/skills";
 import { MemoryStore, MemoryIndexer, listMemoryFiles, ensureMemoryDir } from "@belldandy/memory";
 import { RelayServer } from "@belldandy/browser";
@@ -350,6 +351,9 @@ const dangerousToolsEnabled = readEnv("BELLDANDY_DANGEROUS_TOOLS_ENABLED") === "
 const cronStore = new CronStore(stateDir);
 let cronSchedulerHandle: CronSchedulerHandle | undefined;
 
+// 延迟绑定 broadcast：工具注册时 server 尚未创建，执行时才调用
+let serverBroadcast: ((msg: unknown) => void) | undefined;
+
 // 3. Init Executor (conditional)
 const toolsToRegister = toolsEnabled
   ? [
@@ -383,6 +387,8 @@ const toolsToRegister = toolsEnabled
     logSearchTool,
     // Cron 定时任务管理工具（始终注册，调度器可独立启停）
     createCronTool({ store: cronStore, scheduler: { status: () => cronSchedulerHandle?.status() ?? { running: false, activeRuns: 0 } } }),
+    // 服务重启工具（供 Agent 调用，通过 exit(100) 触发 launcher 重启）
+    createServiceRestartTool((msg) => serverBroadcast?.(msg)),
   ]
   : [];
 
@@ -537,6 +543,9 @@ const server = await startGatewayServer({
   onActivity,
   logger,
 });
+
+// 绑定 broadcast 给 service_restart 工具使用
+serverBroadcast = (msg) => server.broadcast(msg as any);
 
 logger.info("gateway", `Belldandy Gateway running: http://${server.host}:${server.port}`);
 logger.info("gateway", `WebChat: http://${server.host}:${server.port}/`);

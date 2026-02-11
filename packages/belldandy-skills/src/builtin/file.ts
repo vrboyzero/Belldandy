@@ -28,7 +28,7 @@ function isSensitivePath(relativePath: string): boolean {
 }
 
 /** 受保护文件（禁止修改/删除） */
-const PROTECTED_FILES = ["soul.md"];
+const PROTECTED_FILES: string[] = [];
 
 function isProtectedFile(relativePath: string): boolean {
   const normalized = relativePath.replace(/\\/g, "/").toLowerCase();

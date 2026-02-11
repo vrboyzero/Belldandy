@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { OpenAIChatAgent, ToolEnabledAgent, ensureWorkspace, loadWorkspaceFiles, buildSystemPrompt, ConversationStore, loadModelFallbacks, } from "@belldandy/agent";
-import { ToolExecutor, DEFAULT_POLICY, fetchTool, applyPatchTool, fileReadTool, fileWriteTool, fileDeleteTool, listFilesTool, createMemorySearchTool, createMemoryGetTool, browserOpenTool, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserGetContentTool, cameraSnapTool, imageGenerateTool, textToSpeechTool, runCommandTool, methodListTool, methodReadTool, methodCreateTool, methodSearchTool, logReadTool, logSearchTool, createCronTool, } from "@belldandy/skills";
+import { ToolExecutor, DEFAULT_POLICY, fetchTool, applyPatchTool, fileReadTool, fileWriteTool, fileDeleteTool, listFilesTool, createMemorySearchTool, createMemoryGetTool, browserOpenTool, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserGetContentTool, cameraSnapTool, imageGenerateTool, textToSpeechTool, runCommandTool, methodListTool, methodReadTool, methodCreateTool, methodSearchTool, logReadTool, logSearchTool, createCronTool, createServiceRestartTool, } from "@belldandy/skills";
 import { MemoryStore, MemoryIndexer, listMemoryFiles, ensureMemoryDir } from "@belldandy/memory";
 import { RelayServer } from "@belldandy/browser";
 import { FeishuChannel } from "@belldandy/channels";
@@ -268,6 +268,8 @@ const dangerousToolsEnabled = readEnv("BELLDANDY_DANGEROUS_TOOLS_ENABLED") === "
 // Cron Store（无论是否启用调度器，工具都可以管理任务）
 const cronStore = new CronStore(stateDir);
 let cronSchedulerHandle;
+// 延迟绑定 broadcast：工具注册时 server 尚未创建，执行时才调用
+let serverBroadcast;
 // 3. Init Executor (conditional)
 const toolsToRegister = toolsEnabled
     ? [
@@ -298,6 +300,8 @@ const toolsToRegister = toolsEnabled
         logSearchTool,
         // Cron 定时任务管理工具（始终注册，调度器可独立启停）
         createCronTool({ store: cronStore, scheduler: { status: () => cronSchedulerHandle?.status() ?? { running: false, activeRuns: 0 } } }),
+        // 服务重启工具（供 Agent 调用，通过 exit(100) 触发 launcher 重启）
+        createServiceRestartTool((msg) => serverBroadcast?.(msg)),
     ]
     : [];
 const toolExecutor = new ToolExecutor({
@@ -441,6 +445,8 @@ const server = await startGatewayServer({
     onActivity,
     logger,
 });
+// 绑定 broadcast 给 service_restart 工具使用
+serverBroadcast = (msg) => server.broadcast(msg);
 logger.info("gateway", `Belldandy Gateway running: http://${server.host}:${server.port}`);
 logger.info("gateway", `WebChat: http://${server.host}:${server.port}/`);
 logger.info("gateway", `WS: ws://${server.host}:${server.port}`);

@@ -262,6 +262,10 @@ function connect() {
       setStatus("ready");
       flushQueuedText();
 
+      // 重连成功后隐藏重启倒计时浮层
+      const restartOverlay = document.getElementById("restartOverlay");
+      if (restartOverlay) restartOverlay.classList.add("hidden");
+
       // 如果侧边栏已展开，加载文件树
       if (sidebarExpanded) loadFileTree();
 
@@ -559,6 +563,12 @@ function handleEvent(event, payload) {
       `然后再发送一次消息。`;
     return;
   }
+  if (event === "agent.status") {
+    if (payload && payload.status === "restarting" && payload.countdown !== undefined) {
+      showRestartCountdown(payload.countdown, payload.reason || "");
+    }
+    return;
+  }
   if (event === "chat.delta") {
     const delta = payload && payload.delta ? String(payload.delta) : "";
     if (!delta) return;
@@ -578,6 +588,28 @@ function handleEvent(event, payload) {
     // 强制滚动到底部（测试模式）
     forceScrollToBottom();
     return;
+  }
+}
+
+function showRestartCountdown(countdown, reason) {
+  const overlay = document.getElementById("restartOverlay");
+  const countdownEl = document.getElementById("restartCountdown");
+  const reasonEl = document.getElementById("restartReason");
+  if (!overlay || !countdownEl) return;
+
+  if (countdown > 0) {
+    // 显示倒计时
+    overlay.classList.remove("hidden");
+    reasonEl.textContent = reason;
+    countdownEl.textContent = String(countdown);
+    // pulse 动画
+    countdownEl.classList.remove("pulse");
+    void countdownEl.offsetWidth; // force reflow
+    countdownEl.classList.add("pulse");
+  } else {
+    // countdown === 0，服务即将断开
+    countdownEl.textContent = "…";
+    setStatus("Restarting…");
   }
 }
 
@@ -691,6 +723,29 @@ if (composerSection) {
     if (e.dataTransfer?.files) handleFiles(e.dataTransfer.files);
   });
 }
+
+// 粘贴图片支持
+promptEl.addEventListener("paste", (e) => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  const files = [];
+  for (const item of items) {
+    if (item.kind === "file" && item.type.startsWith("image/")) {
+      const file = item.getAsFile();
+      if (file) {
+        // 剪贴板图片默认名无辨识度，加时间戳
+        const ext = file.type.split("/")[1] || "png";
+        const ts = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+        const named = new File([file], `paste-${ts}.${ext}`, { type: file.type });
+        files.push(named);
+      }
+    }
+  }
+  if (files.length > 0) {
+    e.preventDefault();
+    handleFiles(files);
+  }
+});
 
 // 处理文件列表
 async function handleFiles(files) {

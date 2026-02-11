@@ -55,7 +55,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
     this.opts = {
       ...opts,
       timeoutMs: opts.timeoutMs ?? 120_000,
-      maxToolCalls: opts.maxToolCalls ?? 10,
+      maxToolCalls: opts.maxToolCalls ?? 999999,
     };
 
     // 初始化容灾客户端

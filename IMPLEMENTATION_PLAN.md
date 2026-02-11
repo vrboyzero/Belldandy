@@ -56,6 +56,8 @@ flowchart TB
 - **Phase 16**：子 Agent 编排（规划中）
 - **Phase 17–18**：MCP 支持、日志系统
 - **Phase 19**：安全加固（Security Hardening）✅ 已完成
+- **Phase 20**：WebChat UI 增强 ✅ 已完成
+- **Phase 21**：服务重启工具（Service Restart Tool）✅ 已完成
 - **Windows 兼容性增强**：对应 Roadmap Phase 15 的平台兼容任务，详见后文
 
 ## 3. 里程碑与阶段划分
@@ -1412,4 +1414,52 @@ interface Attachment {
 | P2 | 20.1 可操作区设置 | 中 | 需要前后端配合，但逻辑清晰 |
 | P3 | 20.2 配置按钮 | 中 | 需要评估安全策略，可能需要新接口 |
 | P4 | 20.4 文件附件 | 高 | 涉及文件处理、预览、后端传输 |
+
+### Phase 21: 服务重启工具 (Service Restart Tool) [已完成]
+
+**目标**：让 Agent 能够通过工具调用主动重启 Gateway 服务，配合 3 秒倒计时广播通知所有客户端。
+
+**状态**: ✅ 已完成 (2026-02-11)
+
+#### 21.1 实现内容
+
+| Step | 内容 | 状态 |
+|------|------|------|
+| 1 | `service_restart` 工具实现（3 秒倒计时 + `process.exit(100)`） | ✅ 已完成 |
+| 2 | 从 `@belldandy/skills` 导出 `createServiceRestartTool` | ✅ 已完成 |
+| 3 | Gateway 注册工具 + 延迟绑定 `server.broadcast` | ✅ 已完成 |
+| 4 | WebChat 倒计时浮层（`#restartOverlay`） | ✅ 已完成 |
+| 5 | 重连成功后自动隐藏浮层 | ✅ 已完成 |
+
+#### 21.2 文件结构
+
+```
+packages/belldandy-skills/src/
+├── builtin/
+│   └── service-restart.ts    # [NEW] service_restart 工具
+└── index.ts                  # [MODIFIED] 导出 createServiceRestartTool
+
+packages/belldandy-core/src/bin/
+└── gateway.ts                # [MODIFIED] 注册工具 + 延迟绑定 broadcast
+
+apps/web/public/
+├── index.html                # [MODIFIED] 新增 #restartOverlay DOM
+├── styles.css                # [MODIFIED] 倒计时浮层样式
+└── app.js                    # [MODIFIED] 处理 agent.status 倒计时事件
+```
+
+#### 21.3 工作机制
+
+1. Agent 调用 `service_restart({ reason: "配置已更新" })`
+2. 工具开始 3 秒倒计时，每秒广播 `agent.status` 事件（`countdown: 3 → 2 → 1 → 0`）
+3. WebChat 收到事件后显示全屏倒计时浮层（毛玻璃背景 + 旋转图标 + 大号数字）
+4. 倒计时结束后 `process.exit(100)`，launcher 自动重启 Gateway
+5. WebChat 自动重连，收到 `hello-ok` 后隐藏浮层
+
+#### 21.4 验收用例
+
+- [x] 编译通过 (`pnpm build`)
+- [x] Agent 调用 `service_restart` 后，WebChat 显示 3 秒倒计时
+- [x] 倒计时结束后服务自动重启
+- [x] 重连成功后浮层自动消失
 

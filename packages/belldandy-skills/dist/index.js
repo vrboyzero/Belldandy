@@ -13,6 +13,8 @@ export { methodListTool, methodReadTool, methodCreateTool, methodSearchTool } fr
 export { logReadTool, logSearchTool } from "./builtin/log.js";
 // 定时任务工具
 export { createCronTool } from "./builtin/cron-tool.js";
+// 服务重启工具
+export { createServiceRestartTool } from "./builtin/service-restart.js";
 // 浏览器控制工具
 export { browserOpenTool, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserGetContentTool, browserSnapshotTool, } from "./builtin/browser/tools.js";
 export { createMemorySearchTool, createMemoryGetTool } from "./builtin/memory.js";

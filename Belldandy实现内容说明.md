@@ -524,6 +524,39 @@
 | **Gateway 协议** | `cron.*` 系列 RPC 方法 | 前端 WebChat 可直接管理定时任务 |
 | **执行历史** | `run` / `runs` action | 手动触发 + 调试审计 |
 
+### 2.6 服务重启工具 (service_restart) ✅ 已完成
+
+- **目标**：让 Agent 能够通过工具调用主动重启 Gateway 服务，无需用户手动操作。
+- **状态**：**已完成**（2026-02-11）
+- **实现内容**：
+    - **`service_restart` 工具**（`packages/belldandy-skills/src/builtin/service-restart.ts`）：
+        - 接受可选 `reason` 参数（用于日志记录）。
+        - 执行前进行 **3 秒倒计时**，每秒通过 WebSocket 广播 `agent.status` 事件（`countdown: 3 → 2 → 1 → 0`）。
+        - 倒计时结束后调用 `process.exit(100)` 触发 launcher 自动重启。
+    - **WebChat 倒计时浮层**：
+        - 前端监听 `agent.status` 事件中的 `status=restarting` + `countdown` 字段。
+        - 显示半透明毛玻璃浮层，包含旋转图标、重启原因、大号倒计时数字（带 pulse 动画）。
+        - 重连成功（`hello-ok`）后自动隐藏浮层。
+    - **延迟绑定 broadcast**：工具注册时 server 尚未创建，通过闭包在执行时才调用 `server.broadcast`。
+- **与现有重启机制的关系**：
+    | 触发方式 | 位置 | 机制 |
+    |----------|------|------|
+    | `.env` 文件变更 | `gateway.ts` | `fs.watch` + 1500ms 防抖 → `process.exit(100)` |
+    | `system.restart` WS 命令 | `server.ts` | 500ms 延迟 → `process.exit(100)` |
+    | WebChat "Restart" 按钮 | `app.js` | 发送 `system.restart` WS 请求 |
+    | **`service_restart` 工具** | `service-restart.ts` | **3 秒倒计时广播 → `process.exit(100)`** |
+- **文件结构**：
+    ```
+    packages/belldandy-skills/src/builtin/
+    └── service-restart.ts    # [NEW] service_restart 工具
+
+    apps/web/public/
+    ├── index.html            # [MODIFIED] 新增 #restartOverlay 浮层
+    ├── styles.css            # [MODIFIED] 新增倒计时浮层样式
+    └── app.js                # [MODIFIED] 处理 agent.status 倒计时事件
+    ```
+- **价值**：Agent 可以在修改配置后自主重启服务，实现完整的"修改配置 → 重启生效"自动化闭环。
+
 ### 3. MCP (Model Context Protocol) 支持 (Phase 17) ✅ 已完成
 
 - **目标**：实现 MCP 协议支持，让 Belldandy 能够连接外部 MCP 服务器，获取第三方工具和数据源。
