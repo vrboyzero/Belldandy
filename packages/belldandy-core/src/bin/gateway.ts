@@ -246,6 +246,10 @@ const openaiApiKey = readEnv("BELLDANDY_OPENAI_API_KEY");
 const openaiModel = readEnv("BELLDANDY_OPENAI_MODEL");
 const openaiStream = (readEnv("BELLDANDY_OPENAI_STREAM") ?? "true") !== "false";
 const openaiSystemPrompt = readEnv("BELLDANDY_OPENAI_SYSTEM_PROMPT");
+const injectAgents = (readEnv("BELLDANDY_INJECT_AGENTS") ?? "true") !== "false";
+const injectSoul = (readEnv("BELLDANDY_INJECT_SOUL") ?? "true") !== "false";
+const injectMemory = (readEnv("BELLDANDY_INJECT_MEMORY") ?? "true") !== "false";
+
 
 const toolsEnabled = (readEnv("BELLDANDY_TOOLS_ENABLED") ?? "false") === "true";
 const agentTimeoutMsRaw = readEnv("BELLDANDY_AGENT_TIMEOUT_MS");
@@ -474,6 +478,9 @@ const dynamicSystemPrompt = buildSystemPrompt({
   extraSystemPrompt: openaiSystemPrompt,
   userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
   currentTime: new Date().toISOString(),
+  injectAgents,
+  injectSoul,
+  injectMemory,
 });
 
 // 8. Agent Factory (only for openai provider)

@@ -1,5 +1,5 @@
 import type { WorkspaceFile, WorkspaceLoadResult } from "./workspace.js";
-import { SOUL_FILENAME, IDENTITY_FILENAME, USER_FILENAME, BOOTSTRAP_FILENAME, AGENTS_FILENAME, TOOLS_FILENAME } from "./workspace.js";
+import { SOUL_FILENAME, IDENTITY_FILENAME, USER_FILENAME, BOOTSTRAP_FILENAME, AGENTS_FILENAME, TOOLS_FILENAME, MEMORY_FILENAME } from "./workspace.js";
 
 /**
  * System Prompt 构建参数
@@ -13,6 +13,12 @@ export type SystemPromptParams = {
     userTimezone?: string;
     /** 当前时间 */
     currentTime?: string;
+    /** 是否注入 AGENTS.md (默认 true) */
+    injectAgents?: boolean;
+    /** 是否注入 SOUL.md (默认 true) */
+    injectSoul?: boolean;
+    /** 是否注入 MEMORY.md (默认 true) */
+    injectMemory?: boolean;
 };
 
 /**
@@ -49,9 +55,15 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
     const identityFile = files.find(f => f.name === IDENTITY_FILENAME && !f.missing);
     const userFile = files.find(f => f.name === USER_FILENAME && !f.missing);
     const bootstrapFile = files.find(f => f.name === BOOTSTRAP_FILENAME && !f.missing);
+    const memoryFile = files.find(f => f.name === MEMORY_FILENAME && !f.missing);
+
+    // 默认开启注入
+    const shouldInjectAgents = params.injectAgents ?? true;
+    const shouldInjectSoul = params.injectSoul ?? true;
+    const shouldInjectMemory = params.injectMemory ?? true;
 
     // 注入 AGENTS.md（工作空间指南）
-    if (agentsFile?.content) {
+    if (shouldInjectAgents && agentsFile?.content) {
         lines.push("# Workspace Guide");
         lines.push("");
         lines.push("The following is your workspace guide - how to operate in this environment.");
@@ -65,7 +77,7 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
     }
 
     // 注入 SOUL.md（人格准则）
-    if (soulFile?.content) {
+    if (shouldInjectSoul && soulFile?.content) {
         lines.push("# Persona & Guidelines");
         lines.push("");
         lines.push("The following is your SOUL - your core personality and behavioral guidelines.");
@@ -74,6 +86,20 @@ export function buildSystemPrompt(params: SystemPromptParams): string {
         lines.push("---");
         lines.push("");
         lines.push(soulFile.content.trim());
+        lines.push("");
+        lines.push("---");
+        lines.push("");
+    }
+
+    // 注入 MEMORY.md (长期记忆/注意事项)
+    if (shouldInjectMemory && memoryFile?.content) {
+        lines.push("# Core Memory & Notes");
+        lines.push("");
+        lines.push("The following is your MEMORY - important facts, rules, or context to always remember.");
+        lines.push("");
+        lines.push("---");
+        lines.push("");
+        lines.push(memoryFile.content.trim());
         lines.push("");
         lines.push("---");
         lines.push("");
