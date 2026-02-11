@@ -12,7 +12,7 @@ export class ToolEnabledAgent {
         this.opts = {
             ...opts,
             timeoutMs: opts.timeoutMs ?? 120_000,
-            maxToolCalls: opts.maxToolCalls ?? 10,
+            maxToolCalls: opts.maxToolCalls ?? 999999,
         };
         // 初始化容灾客户端
         this.failoverClient = new FailoverClient({

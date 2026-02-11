@@ -557,6 +557,44 @@
     ```
 - **价值**：Agent 可以在修改配置后自主重启服务，实现完整的"修改配置 → 重启生效"自动化闭环。
 
+### 2.7 FACET 模组切换工具 (switch_facet) ✅ 已完成
+
+- **目标**：将 SOUL.md 中 FACET 模组的手动读写切换流程自动化为一次工具调用，省时、省 Token、减少错误。
+- **状态**：**已完成**（2026-02-11）
+- **实现内容**：
+    - **`switch_facet` 工具**（`packages/belldandy-skills/src/builtin/switch-facet.ts`）：
+        - 接受 `facet_name` 参数（模组文件名，不含 `.md` 后缀）。
+        - 自动定位 SOUL.md 中的锚点行（`## **警告** FACET 模组 内容切换时...`）。
+        - 保留锚点行及之前的所有内容，将锚点行之后替换为目标 facet 文件内容。
+        - **原子写入**：先写 `SOUL.md.tmp`，成功后 `fs.rename` 覆盖，确保 SOUL.md 不会因中途失败而损坏。
+        - **路径穿越防护**：拒绝包含 `/`、`\`、`..` 的 facet_name。
+        - **友好错误提示**：模组不存在时列出所有可用模组名称。
+    - **SOUL.md 提示词精简**：
+        - 原 FACET 动态切换协议从 6 步手动读写流程精简为 5 步工具调用流程。
+        - 去掉了手动文件读写步骤和方法论文件引用，Agent 只需调用 `switch_facet` + `service_restart` 即可完成切换。
+- **与原有手动流程的对比**：
+    | 对比项 | 原流程（手动） | 新流程（工具） |
+    |--------|---------------|---------------|
+    | 步骤数 | 6 步（读文件→定位→替换→审计→确认→重启） | 2 步（`switch_facet` → `service_restart`） |
+    | Token 消耗 | 高（需读写大量文件内容） | 低（一次工具调用） |
+    | 出错风险 | 高（网络/环境问题可能中断） | 低（原子写入保证一致性） |
+    | 耗时 | 多轮对话 | 单轮完成 |
+- **文件结构**：
+    ```
+    packages/belldandy-skills/src/builtin/
+    └── switch-facet.ts           # [NEW] switch_facet 工具
+
+    packages/belldandy-skills/src/
+    └── index.ts                  # [MODIFIED] 导出 switchFacetTool
+
+    packages/belldandy-core/src/bin/
+    └── gateway.ts                # [MODIFIED] 导入并注册 switchFacetTool
+
+    packages/belldandy-agent/src/templates/
+    └── SOUL.md                   # [MODIFIED] 精简 FACET 切换协议提示词
+    ```
+- **价值**：将 FACET 模组切换从"Agent 自行摸索的多步操作"变为"一键工具调用"，显著降低切换成本和失败率。
+
 ### 3. MCP (Model Context Protocol) 支持 (Phase 17) ✅ 已完成
 
 - **目标**：实现 MCP 协议支持，让 Belldandy 能够连接外部 MCP 服务器，获取第三方工具和数据源。
@@ -796,9 +834,10 @@ Moltbot 支持大量第三方集成插件（Skills），例如：
 | **多媒体** | ✅ tts/image/canvas | ✅ tts/image | 缺少 `canvas` |
 | **会话编排** | ✅ 完整 | ❌ 未实现 | — |
 | **渠道集成** | ✅ 4+ channels | ✅ 飞书 + Channel 接口 | 架构已就绪，可快速扩展 |
-| **定时任务** | ✅ cron tool | ✅ heartbeat | 不同实现 |
+| **定时任务** | ✅ cron tool | ✅ heartbeat + cron | 轻量 MVP 已完成 |
 | **插件系统** | ✅ 丰富 | ✅ 完整对标 | 13 种钩子 + HookRunner + 优先级 |
 | **MCP 支持** | ✅ ACP 协议 | ✅ MCP 协议 | stdio/SSE 传输 + 工具桥接 |
+| **FACET 模组** | — | ✅ switch_facet | 原子化切换 SOUL.md 模组 |
 
 ---
 

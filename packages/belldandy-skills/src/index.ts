@@ -35,6 +35,9 @@ export { logReadTool, logSearchTool } from "./builtin/log.js";
 // 定时任务工具
 export { createCronTool, type CronToolDeps } from "./builtin/cron-tool.js";
 
+// FACET 模组切换工具
+export { switchFacetTool } from "./builtin/switch-facet.js";
+
 // 服务重启工具
 export { createServiceRestartTool, type BroadcastFn } from "./builtin/service-restart.js";
 

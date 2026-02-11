@@ -45,6 +45,7 @@ import {
   logSearchTool,
   createCronTool,
   createServiceRestartTool,
+  switchFacetTool,
 } from "@belldandy/skills";
 import { MemoryStore, MemoryIndexer, listMemoryFiles, ensureMemoryDir } from "@belldandy/memory";
 import { RelayServer } from "@belldandy/browser";
@@ -389,6 +390,8 @@ const toolsToRegister = toolsEnabled
     createCronTool({ store: cronStore, scheduler: { status: () => cronSchedulerHandle?.status() ?? { running: false, activeRuns: 0 } } }),
     // 服务重启工具（供 Agent 调用，通过 exit(100) 触发 launcher 重启）
     createServiceRestartTool((msg) => serverBroadcast?.(msg)),
+    // FACET 模组切换工具
+    switchFacetTool,
   ]
   : [];
 

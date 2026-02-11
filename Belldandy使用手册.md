@@ -422,7 +422,33 @@ Belldandy 提供了 `service_restart` 工具，让 Agent 能够主动重启 Gate
 
 > **⚠️ 注意**：`service_restart` 需要通过 `pnpm start`（launcher 模式）启动服务才能自动重启。如果使用 `pnpm dev:gateway` 直接启动，exit code 100 会直接终止进程而不会重启。
 
-### 5.6 日志系统 (Logs)
+### 5.6 FACET 模组切换
+
+FACET 是 Belldandy 的"职能模组"系统——通过切换不同的模组文件，可以让同一个 Agent 在不同角色之间快速转换（例如"程序员模式"、"翻译模式"、"创意写作模式"等）。
+
+**模组文件位置**：`~/.belldandy/facets/` 目录下的 `.md` 文件。
+
+**使用方法**：直接在对话中告诉 Belldandy：
+
+| 你说的话 | Belldandy 做的事 |
+|----------|------------------|
+| "切换模组为 coder" | 调用 `switch_facet` 工具替换 SOUL.md 中的模组内容，然后自动重启服务 |
+| "切换 FACET 为 translator" | 同上，切换到翻译模组 |
+
+**工作原理**：
+
+1. `switch_facet` 工具读取 `~/.belldandy/facets/{模组名}.md` 文件
+2. 在 SOUL.md 中找到锚点行，保留锚点行及之前的所有内容（人格核心不变）
+3. 将锚点行之后的内容替换为新模组内容（原子写入，不会损坏文件）
+4. Agent 随后调用 `service_restart` 重启服务，清空旧模组的推理惯性
+
+**创建自定义模组**：
+
+在 `~/.belldandy/facets/` 目录下创建 `.md` 文件即可。文件内容会被完整追加到 SOUL.md 的锚点行之后。建议以 `## 【FACET | 模组 | 文件名】` 开头，保持格式一致。
+
+> **💡 提示**：模组切换不会影响 SOUL.md 中的 TABOO、ETHOS、SYSTEM 等核心章节——这些内容位于锚点行之前，始终保持不变。
+
+### 5.7 日志系统 (Logs)
 
 Belldandy 的运行日志保存在 `~/.belldandy/logs/` 目录，支持：
 

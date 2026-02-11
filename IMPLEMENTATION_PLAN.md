@@ -58,6 +58,7 @@ flowchart TB
 - **Phase 19**：安全加固（Security Hardening）✅ 已完成
 - **Phase 20**：WebChat UI 增强 ✅ 已完成
 - **Phase 21**：服务重启工具（Service Restart Tool）✅ 已完成
+- **Phase 22**：FACET 模组切换工具（switch_facet）✅ 已完成
 - **Windows 兼容性增强**：对应 Roadmap Phase 15 的平台兼容任务，详见后文
 
 ## 3. 里程碑与阶段划分
@@ -1462,4 +1463,57 @@ apps/web/public/
 - [x] Agent 调用 `service_restart` 后，WebChat 显示 3 秒倒计时
 - [x] 倒计时结束后服务自动重启
 - [x] 重连成功后浮层自动消失
+
+### Phase 22: FACET 模组切换工具 (switch_facet) [已完成]
+
+**目标**：将 SOUL.md 中 FACET 模组的手动读写切换流程自动化为原子化工具调用，降低 Token 消耗和出错风险。
+
+**状态**: ✅ 已完成 (2026-02-11)
+
+#### 22.1 实现内容
+
+| Step | 内容 | 状态 |
+|------|------|------|
+| 1 | `switch_facet` 工具实现（锚点定位 + 内容替换 + 原子写入） | ✅ 已完成 |
+| 2 | 从 `@belldandy/skills` 导出 `switchFacetTool` | ✅ 已完成 |
+| 3 | Gateway 注册工具 | ✅ 已完成 |
+| 4 | SOUL.md 提示词精简（6 步手动 → 5 步工具调用） | ✅ 已完成 |
+
+#### 22.2 文件结构
+
+```
+packages/belldandy-skills/src/
+├── builtin/
+│   └── switch-facet.ts       # [NEW] switch_facet 工具
+└── index.ts                  # [MODIFIED] 导出 switchFacetTool
+
+packages/belldandy-core/src/bin/
+└── gateway.ts                # [MODIFIED] 导入并注册 switchFacetTool
+
+packages/belldandy-agent/src/templates/
+└── SOUL.md                   # [MODIFIED] 精简 FACET 切换协议
+```
+
+#### 22.3 工作机制
+
+1. Agent 调用 `switch_facet({ facet_name: "coder" })`
+2. 工具读取 `~/.belldandy/SOUL.md`，定位锚点行
+3. 保留锚点行（含）及之前的所有内容
+4. 读取 `~/.belldandy/facets/coder.md` 内容，追加到锚点行之后
+5. 原子写入：先写 `SOUL.md.tmp`，成功后 `fs.rename` 覆盖
+6. 返回成功信息，Agent 随后调用 `service_restart` 重启服务
+
+#### 22.4 安全措施
+
+- **路径穿越防护**：拒绝包含 `/`、`\`、`..` 的 facet_name
+- **原子写入**：通过 tmp 文件 + rename 保证 SOUL.md 不会因中途失败而损坏
+- **友好错误**：模组不存在时列出所有可用模组名称
+- **锚点校验**：未找到锚点时报错，不修改文件
+
+#### 22.5 验收用例
+
+- [x] 编译通过 (`pnpm build`)
+- [x] 传入有效 facet_name 时，SOUL.md 锚点行之前内容不变，之后替换为目标模组内容
+- [x] 传入不存在的 facet_name 时，返回错误并列出可用模组
+- [x] 传入含路径穿越字符的 facet_name 时，返回错误
 

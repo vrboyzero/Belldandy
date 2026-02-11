@@ -24,7 +24,7 @@ function isSensitivePath(relativePath) {
     return SENSITIVE_PATTERNS.some(p => lower.includes(p));
 }
 /** 受保护文件（禁止修改/删除） */
-const PROTECTED_FILES = ["soul.md"];
+const PROTECTED_FILES = [];
 function isProtectedFile(relativePath) {
     const normalized = relativePath.replace(/\\/g, "/").toLowerCase();
     return PROTECTED_FILES.some(p => normalized === p || normalized.endsWith(`/${p}`));

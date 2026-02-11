@@ -13,6 +13,8 @@ export { methodListTool, methodReadTool, methodCreateTool, methodSearchTool } fr
 export { logReadTool, logSearchTool } from "./builtin/log.js";
 // 定时任务工具
 export { createCronTool } from "./builtin/cron-tool.js";
+// FACET 模组切换工具
+export { switchFacetTool } from "./builtin/switch-facet.js";
 // 服务重启工具
 export { createServiceRestartTool } from "./builtin/service-restart.js";
 // 浏览器控制工具
