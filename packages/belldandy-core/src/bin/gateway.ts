@@ -330,11 +330,20 @@ if (!fs.existsSync(stateDir)) {
   }
 }
 
-// 1.5 Ensure methods dir exists
+// 1.5 Ensure methods and facets dir exists
 const methodsDir = path.join(stateDir, "methods");
 if (!fs.existsSync(methodsDir)) {
   try {
     fs.mkdirSync(methodsDir, { recursive: true });
+  } catch {
+    // ignore
+  }
+}
+
+const facetsDir = path.join(stateDir, "facets");
+if (!fs.existsSync(facetsDir)) {
+  try {
+    fs.mkdirSync(facetsDir, { recursive: true });
   } catch {
     // ignore
   }

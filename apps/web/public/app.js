@@ -37,6 +37,8 @@ let queuedText = null;
 let editorMode = false;
 let currentEditPath = null;
 let originalContent = null;
+// Tree Mode: "root" | "facets"
+let currentTreeMode = "root";
 const expandedFolders = new Set();
 
 // 附件状态
@@ -852,6 +854,7 @@ function renderAttachmentsPreview() {
 // ==================== 文件树和编辑器逻辑 ====================
 
 // 侧边栏标题点击事件（展开/收起）
+// 侧边栏标题点击事件（不再作为模式切换，仅展开/收起）
 if (sidebarTitleEl) {
   sidebarTitleEl.addEventListener("click", () => toggleSidebar());
 }
@@ -887,6 +890,56 @@ if (saveEditBtn) {
 const openEnvEditorBtn = document.getElementById("openEnvEditor");
 if (openEnvEditorBtn) {
   openEnvEditorBtn.addEventListener("click", () => openEnvFile());
+}
+
+// 导航按钮
+const switchRootBtn = document.getElementById("switchRoot");
+const switchFacetBtn = document.getElementById("switchFacet");
+
+if (switchRootBtn) {
+  switchRootBtn.addEventListener("click", () => switchTreeMode("root"));
+}
+if (switchFacetBtn) {
+  switchFacetBtn.addEventListener("click", () => switchTreeMode("facets"));
+}
+
+// 切换文件树模式
+function switchTreeMode(mode) {
+  if (currentTreeMode === mode) {
+    if (!sidebarExpanded) toggleSidebar();
+    else loadFileTree();
+    return;
+  }
+
+  currentTreeMode = mode;
+  expandedFolders.clear();
+
+  // 更新 UI 样式
+  if (switchRootBtn) {
+    if (mode === "root") {
+      switchRootBtn.style.background = "rgba(255,255,255,0.1)";
+      switchRootBtn.style.opacity = "1";
+    } else {
+      switchRootBtn.style.background = "transparent";
+      switchRootBtn.style.opacity = "0.7";
+    }
+  }
+  if (switchFacetBtn) {
+    if (mode === "facets") {
+      switchFacetBtn.style.background = "rgba(255,255,255,0.1)";
+      switchFacetBtn.style.opacity = "1";
+    } else {
+      switchFacetBtn.style.background = "transparent";
+      switchFacetBtn.style.opacity = "0.7";
+    }
+  }
+
+  // 确保侧边栏展开
+  if (!sidebarExpanded) {
+    toggleSidebar();
+  } else {
+    loadFileTree();
+  }
 }
 
 // 打开 .env 文件进行编辑
@@ -930,7 +983,7 @@ async function loadFileTree(folderPath = "") {
     type: "req",
     id,
     method: "workspace.list",
-    params: { path: folderPath },
+    params: { path: currentTreeMode === "facets" && !folderPath ? "facets" : folderPath },
   });
 
   if (!res || !res.ok || !res.payload || !res.payload.items) {
