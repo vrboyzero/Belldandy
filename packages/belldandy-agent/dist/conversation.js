@@ -152,10 +152,15 @@ export class ConversationStore {
         const conv = this.get(id);
         if (!conv)
             return [];
-        // 返回纯净的消息对象
+        // 返回纯净的消息对象（彻底删除 <audio> 标签和下载链接，不留任何痕迹）
         return conv.messages.map(m => ({
             role: m.role,
             content: m.content
+                .replace(/<audio[^>]*>.*?<\/audio>/gi, "")
+                .replace(/\[Audio was generated and played\]/gi, "")
+                .replace(/\[Download\]\([^)]*\/generated\/[^)]*\)/gi, "")
+                .replace(/\n{3,}/g, "\n\n")
+                .trim() || m.content
         }));
     }
 }

@@ -11,6 +11,12 @@ export type SystemPromptParams = {
     userTimezone?: string;
     /** 当前时间 */
     currentTime?: string;
+    /** 是否注入 AGENTS.md (默认 true) */
+    injectAgents?: boolean;
+    /** 是否注入 SOUL.md (默认 true) */
+    injectSoul?: boolean;
+    /** 是否注入 MEMORY.md (默认 true) */
+    injectMemory?: boolean;
 };
 /**
  * 构建完整的 System Prompt

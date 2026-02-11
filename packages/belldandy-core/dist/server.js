@@ -171,6 +171,8 @@ export async function startGatewayServer(opts) {
                 stateDir: opts.stateDir ?? resolveStateDir(),
                 agentFactory: opts.agentFactory ?? (() => new MockAgent()),
                 conversationStore,
+                ttsEnabled: opts.ttsEnabled,
+                ttsSynthesize: opts.ttsSynthesize,
             });
             if (res)
                 sendRes(ws, res);
@@ -357,6 +359,7 @@ async function handleReq(ws, req, ctx) {
                             ...contentParts
                         ];
                     }
+                    const isTts = ctx.ttsEnabled?.() ?? false;
                     let fullResponse = "";
                     for await (const item of agent.run(runInput)) {
                         if (item.type === "status") {
@@ -364,15 +367,44 @@ async function handleReq(ws, req, ctx) {
                         }
                         if (item.type === "delta") {
                             fullResponse += item.delta;
-                            sendEvent(ws, { type: "event", event: "chat.delta", payload: { conversationId, delta: item.delta } });
+                            // TTS mode: suppress deltas (text + audio sent together after TTS completes)
+                            if (!isTts) {
+                                sendEvent(ws, { type: "event", event: "chat.delta", payload: { conversationId, delta: item.delta } });
+                            }
                         }
                         if (item.type === "final") {
                             fullResponse = item.text;
-                            sendEvent(ws, { type: "event", event: "chat.final", payload: { conversationId, text: item.text } });
+                            // TTS mode: defer chat.final until after TTS generation
+                            if (!isTts) {
+                                sendEvent(ws, { type: "event", event: "chat.final", payload: { conversationId, text: item.text } });
+                            }
                         }
                     }
+                    // Server-side auto TTS: generate audio and send combined response
+                    if (isTts && fullResponse && ctx.ttsSynthesize) {
+                        sendEvent(ws, { type: "event", event: "agent.status", payload: { conversationId, status: "generating_audio" } });
+                        const ttsResult = await ctx.ttsSynthesize(fullResponse);
+                        if (ttsResult) {
+                            const finalWithAudio = ttsResult.htmlAudio + "\n\n" + fullResponse;
+                            sendEvent(ws, { type: "event", event: "chat.final", payload: { conversationId, text: finalWithAudio } });
+                        }
+                        else {
+                            // TTS failed, fallback to text-only
+                            sendEvent(ws, { type: "event", event: "chat.final", payload: { conversationId, text: fullResponse } });
+                        }
+                    }
+                    else if (isTts && fullResponse) {
+                        // TTS enabled but no synthesize function — send text-only
+                        sendEvent(ws, { type: "event", event: "chat.final", payload: { conversationId, text: fullResponse } });
+                    }
                     if (fullResponse) {
-                        ctx.conversationStore.addMessage(conversationId, "assistant", fullResponse);
+                        // Strip <audio> tags and download links before persisting — leave no trace for LLM to copy
+                        const sanitized = fullResponse
+                            .replace(/<audio[^>]*>.*?<\/audio>/gi, "")
+                            .replace(/\[Download\]\([^)]*\/generated\/[^)]*\)/gi, "")
+                            .replace(/\n{3,}/g, "\n\n")
+                            .trim();
+                        ctx.conversationStore.addMessage(conversationId, "assistant", sanitized || fullResponse);
                     }
                 }
                 catch (err) {
@@ -438,7 +470,9 @@ async function handleReq(ws, req, ctx) {
                 // Extended whitelist for settings panel
                 "BELLDANDY_OPENAI_API_KEY", "BELLDANDY_AGENT_PROVIDER",
                 "BELLDANDY_EMBEDDING_OPENAI_API_KEY", "BELLDANDY_EMBEDDING_OPENAI_BASE_URL",
-                "BELLDANDY_EMBEDDING_MODEL"
+                "BELLDANDY_EMBEDDING_MODEL",
+                // TTS & DashScope
+                "BELLDANDY_TTS_PROVIDER", "BELLDANDY_TTS_VOICE", "DASHSCOPE_API_KEY"
             ]);
             for (const key of Object.keys(updates)) {
                 if (!SAFE_UPDATE_KEYS.has(key)) {

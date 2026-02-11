@@ -36,6 +36,7 @@ import {
   cameraSnapTool,
   imageGenerateTool,
   textToSpeechTool,
+  synthesizeSpeech,
   runCommandTool,
   methodListTool,
   methodReadTool,
@@ -500,19 +501,21 @@ const createAgent = agentProvider === "openai"
       throw new Error("CONFIG_REQUIRED");
     }
 
-    // Dynamic TTS Check
-    const ttsEnabledPath = path.join(stateDir, "TTS_ENABLED");
-    const isTtsEnabled = fs.existsSync(ttsEnabledPath);
+    // Dynamic TTS Check: env explicit "false" wins; otherwise env "true" or signal file
+    const ttsEnv = process.env.BELLDANDY_TTS_ENABLED;
+    const isTtsEnabled = ttsEnv === "false"
+      ? false
+      : ttsEnv === "true" || fs.existsSync(path.join(stateDir, "TTS_ENABLED"));
 
     let currentSystemPrompt = dynamicSystemPrompt;
     if (isTtsEnabled) {
       currentSystemPrompt += `
 
 ## [SYSTEM MODE: VOICE/TTS ENABLED]
-The user has enabled text-to-speech.
-You MUST generate spoken audio for your response using the 'text_to_speech' tool.
-Do this for every single message unless the user explicitly asks you to stop.
-Use the 'edge' provider by default for free, high-quality speech.`;
+The user has enabled text-to-speech. Audio will be generated automatically by the system.
+You do NOT need to call any TTS tool — just respond with text as usual.
+Do NOT include any <audio> HTML tags or [Download] links in your response.
+Keep responses concise and natural for spoken delivery.`;
     }
 
     if (toolsEnabled) {
@@ -551,6 +554,13 @@ const conversationStore = new ConversationStore({
   maxHistory: 50, // Default history length
 });
 
+const ttsEnabledPath = path.join(stateDir, "TTS_ENABLED");
+const isTtsEnabledFn = () => {
+  const ttsEnv = process.env.BELLDANDY_TTS_ENABLED;
+  if (ttsEnv === "false") return false;
+  return ttsEnv === "true" || fs.existsSync(ttsEnabledPath);
+};
+
 const server = await startGatewayServer({
   port,
   host,
@@ -561,6 +571,14 @@ const server = await startGatewayServer({
   conversationStore: conversationStore, // Pass shared instance
   onActivity,
   logger,
+  ttsEnabled: isTtsEnabledFn,
+  ttsSynthesize: async (text: string) => {
+    const result = await synthesizeSpeech({ text, stateDir });
+    if (result) {
+      logger.info("tts-auto", `Audio generated: ${result.webPath}`);
+    }
+    return result;
+  },
 });
 
 // 绑定 broadcast 给 service_restart 工具使用

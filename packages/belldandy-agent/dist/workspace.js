@@ -11,6 +11,7 @@ export const BOOTSTRAP_FILENAME = "BOOTSTRAP.md";
 export const AGENTS_FILENAME = "AGENTS.md";
 export const TOOLS_FILENAME = "TOOLS.md";
 export const HEARTBEAT_FILENAME = "HEARTBEAT.md";
+export const MEMORY_FILENAME = "MEMORY.md";
 // 模板目录（相对于此文件）
 const TEMPLATE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "templates");
 /**
@@ -66,7 +67,13 @@ export async function ensureWorkspace(params) {
         TOOLS_FILENAME,
         IDENTITY_FILENAME,
         USER_FILENAME,
+        USER_FILENAME,
         HEARTBEAT_FILENAME,
+        // MEMORY.md is optional and not created by default unless explicitly requested (not in coreFiles for creation check usually, or add here if we want empty one)
+        // For now, let's include it in coreFiles so ensureWorkspace checks it, but maybe we don't want to force create it if it doesn't exist?
+        // The user request said "at the beginning there might not be MEMORY.md", so we should NOT force create it here.
+        // Removing from coreFiles for creation to avoid error if template is missing or to avoid forcing it.
+        // Actually, let's NOT include it in coreFiles for creation to respect "optional" nature.
     ];
     // 检查是否是全新工作区（所有核心文件都不存在）
     const existenceChecks = await Promise.all(coreFiles.map(async (fileName) => {
@@ -157,6 +164,7 @@ export async function loadWorkspaceFiles(dir) {
         USER_FILENAME,
         HEARTBEAT_FILENAME,
         BOOTSTRAP_FILENAME,
+        MEMORY_FILENAME,
     ];
     const files = [];
     for (const name of fileNames) {
@@ -185,6 +193,7 @@ export async function loadWorkspaceFiles(dir) {
     const hasAgents = files.some(f => f.name === AGENTS_FILENAME && !f.missing);
     const hasTools = files.some(f => f.name === TOOLS_FILENAME && !f.missing);
     const hasHeartbeat = files.some(f => f.name === HEARTBEAT_FILENAME && !f.missing);
+    const hasMemory = files.some(f => f.name === MEMORY_FILENAME && !f.missing);
     return {
         dir,
         files,
@@ -195,6 +204,7 @@ export async function loadWorkspaceFiles(dir) {
         hasAgents,
         hasTools,
         hasHeartbeat,
+        hasMemory,
     };
 }
 //# sourceMappingURL=workspace.js.map

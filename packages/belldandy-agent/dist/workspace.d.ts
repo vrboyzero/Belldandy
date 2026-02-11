@@ -8,10 +8,11 @@ export declare const BOOTSTRAP_FILENAME = "BOOTSTRAP.md";
 export declare const AGENTS_FILENAME = "AGENTS.md";
 export declare const TOOLS_FILENAME = "TOOLS.md";
 export declare const HEARTBEAT_FILENAME = "HEARTBEAT.md";
+export declare const MEMORY_FILENAME = "MEMORY.md";
 /**
  * Workspace 文件类型
  */
-export type WorkspaceFileName = typeof SOUL_FILENAME | typeof IDENTITY_FILENAME | typeof USER_FILENAME | typeof BOOTSTRAP_FILENAME | typeof AGENTS_FILENAME | typeof TOOLS_FILENAME | typeof HEARTBEAT_FILENAME;
+export type WorkspaceFileName = typeof SOUL_FILENAME | typeof IDENTITY_FILENAME | typeof USER_FILENAME | typeof BOOTSTRAP_FILENAME | typeof AGENTS_FILENAME | typeof TOOLS_FILENAME | typeof HEARTBEAT_FILENAME | typeof MEMORY_FILENAME;
 /**
  * Workspace 文件结构
  */
@@ -34,6 +35,7 @@ export type WorkspaceLoadResult = {
     hasAgents: boolean;
     hasTools: boolean;
     hasHeartbeat: boolean;
+    hasMemory: boolean;
 };
 /**
  * 确保 Workspace 目录存在，并创建缺失的模板文件

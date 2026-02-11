@@ -205,7 +205,12 @@ export class FeishuChannel implements Channel {
 
             if (replyText) {
                 // [PERSISTENCE] Add Assistant Message to Store
-                this.conversationStore.addMessage(chatId, "assistant", replyText);
+                const sanitized = replyText
+                  .replace(/<audio[^>]*>.*?<\/audio>/gi, "")
+                  .replace(/\[Download\]\([^)]*\/generated\/[^)]*\)/gi, "")
+                  .replace(/\n{3,}/g, "\n\n")
+                  .trim();
+                this.conversationStore.addMessage(chatId, "assistant", sanitized || replyText);
 
                 await this.reply(msgId, replyText);
                 console.log(`Feishu: Repled to message ${msgId}`);

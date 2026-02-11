@@ -20,6 +20,13 @@ export type GatewayServerOptions = {
     onActivity?: () => void;
     /** 可选：统一 Logger，未提供时使用 console */
     logger?: BelldandyLogger;
+    /** Server-side auto TTS: check if TTS mode is enabled */
+    ttsEnabled?: () => boolean;
+    /** Server-side auto TTS: synthesize speech from text */
+    ttsSynthesize?: (text: string) => Promise<{
+        webPath: string;
+        htmlAudio: string;
+    } | null>;
 };
 export type GatewayServer = {
     port: number;

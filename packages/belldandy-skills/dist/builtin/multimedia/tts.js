@@ -1,12 +1,9 @@
-import OpenAI from "openai";
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { EdgeTTS } from "node-edge-tts";
+import { synthesizeSpeech } from "./tts-synthesize.js";
 export const textToSpeechTool = {
     definition: {
         name: "text_to_speech",
-        description: "Convert text to spoken audio using OpenAI TTS or Edge TTS (Free).",
+        description: "Convert text to spoken audio using OpenAI TTS, Edge TTS (Free), or DashScope (Aliyun).",
         parameters: {
             type: "object",
             properties: {
@@ -16,17 +13,17 @@ export const textToSpeechTool = {
                 },
                 provider: {
                     type: "string",
-                    enum: ["openai", "edge"],
-                    description: "TTS Provider: 'openai' (paid) or 'edge' (free). Default: 'edge'.",
+                    enum: ["openai", "edge", "dashscope"],
+                    description: "TTS Provider: 'openai', 'edge' (free), or 'dashscope' (Aliyun). Default: 'edge'.",
                 },
                 voice: {
                     type: "string",
-                    description: "Voice ID. OpenAI: 'alloy', 'echo'. Edge: 'zh-CN-XiaoxiaoNeural', 'en-US-AriaNeural'. Default: Auto-selects based on provider.",
+                    description: "Voice ID. OpenAI: 'alloy'. Edge: 'zh-CN-XiaoxiaoNeural'. DashScope: 'Cherry'. Default: Auto-selects.",
                 },
                 model: {
                     type: "string",
                     enum: ["tts-1", "tts-1-hd"],
-                    description: "OpenAI model to use (default: tts-1). Ignored for Edge.",
+                    description: "OpenAI model to use (default: tts-1). Ignored for Edge/DashScope.",
                 },
             },
             required: ["input"],
@@ -36,57 +33,31 @@ export const textToSpeechTool = {
         const start = Date.now();
         const id = crypto.randomUUID();
         const name = "text_to_speech";
-        const provider = args.provider || "edge";
-        const input = args.input;
-        // Define active voice
-        let voice = args.voice;
-        if (!voice) {
-            voice = provider === "openai" ? "alloy" : "zh-CN-XiaoxiaoNeural";
-        }
         try {
-            const generatedDir = path.join(context.workspaceRoot, ".belldandy", "generated");
-            await fs.mkdir(generatedDir, { recursive: true });
-            const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-            const filename = `speech-${timestamp}.mp3`;
-            const filepath = path.join(generatedDir, filename);
-            if (provider === "openai") {
-                const apiKey = process.env.OPENAI_API_KEY;
-                const baseURL = process.env.OPENAI_BASE_URL;
-                if (!apiKey)
-                    throw new Error("OPENAI_API_KEY required for OpenAI provider.");
-                const openai = new OpenAI({ apiKey, baseURL });
-                const mp3 = await openai.audio.speech.create({
-                    model: args.model || "tts-1",
-                    voice: voice,
-                    input: input,
-                });
-                const buffer = Buffer.from(await mp3.arrayBuffer());
-                await fs.writeFile(filepath, buffer);
+            const result = await synthesizeSpeech({
+                text: args.input,
+                stateDir: context.workspaceRoot,
+                provider: args.provider,
+                voice: args.voice,
+                model: args.model,
+            });
+            if (!result) {
+                return {
+                    id, name, success: false, output: "",
+                    error: "TTS synthesis returned no result (empty input or all providers failed).",
+                    durationMs: Date.now() - start,
+                };
             }
-            else {
-                // Edge TTS
-                const tts = new EdgeTTS({
-                    voice: voice,
-                });
-                await tts.ttsPromise(input, filepath);
-            }
-            // Return relative path for web access (served by Gateway static /generated)
-            const webPath = `/generated/${filename}`;
-            const htmlAudio = `<audio controls src="${webPath}" preload="metadata"></audio>`;
+            const provider = args.provider || process.env.BELLDANDY_TTS_PROVIDER || "edge";
             return {
-                id,
-                name,
-                success: true,
-                output: `Audio generated (${provider} - ${voice}):\n\n${htmlAudio}\n[Download](${webPath})`,
+                id, name, success: true,
+                output: `Audio generated (${provider}):\n\n${result.htmlAudio}\n[Download](${result.webPath})`,
                 durationMs: Date.now() - start,
             };
         }
         catch (err) {
             return {
-                id,
-                name,
-                success: false,
-                output: "",
+                id, name, success: false, output: "",
                 error: err instanceof Error ? err.message : String(err),
                 durationMs: Date.now() - start,
             };

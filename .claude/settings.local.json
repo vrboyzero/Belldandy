@@ -12,7 +12,12 @@
       "mcp__chrome-devtools__list_pages",
       "mcp__chrome-devtools__navigate_page",
       "mcp__chrome-devtools__take_snapshot",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(corepack pnpm list:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(npm view:*)",
+      "WebFetch(domain:help.aliyun.com)"
     ]
   }
 }

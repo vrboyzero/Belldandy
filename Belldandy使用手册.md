@@ -782,6 +782,8 @@ MCP 工具在 Belldandy 中的命名格式为：`mcp_{serverId}_{toolName}`
     *   Agent 会自动进入 TTS 模式，每条回复都会附带语音播放器。
 *   **关闭语音**：对它说 "关闭语音" 或 "太吵了"。
     *   Agent 会立即停止生成音频。
+*   **或是在.env文件中启用语音模式**：服务端自动将 Agent 回复转为语音，true/false，默认 false
+    *   `BELLDANDY_TTS_ENABLED=false`
 
 > **原理**：Agent 会在你的工作区目录创建/删除一个名为 `TTS_ENABLED` 的信号文件。
 

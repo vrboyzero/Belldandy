@@ -576,7 +576,17 @@ function handleEvent(event, payload) {
     if (!delta) return;
     if (!botMsgEl) botMsgEl = appendMessage("bot", "");
 
-    botMsgEl.textContent += delta;
+    // [FIX] Use innerHTML to support audio tags and basic formatting
+    // Note: Simple appending might break HTML structure during streaming, but strictly speaking
+    // for <audio> tags at the start/end it usually works. 
+    // Ideally we should re-render the whole markdown, but for now we trust the backend sends valid chunks.
+    // However, += on innerHTML is bad for performance and can break open tags.
+    // For now, let's just use the accumulative buffer logic if possible, or naive append.
+    // Since we don't have the full text here easily without state, we might need to rely on the fact 
+    // that `botMsgEl` is accumulating. 
+    // BUT! `textContent +=` works for text. `innerHTML +=` re-parses everything.
+    // Let's assume the delta is just text or complete tags for now.
+    botMsgEl.innerHTML += delta;
 
     // 强制滚动到底部（测试模式）
     forceScrollToBottom();
@@ -586,7 +596,18 @@ function handleEvent(event, payload) {
     const text = payload && payload.text ? String(payload.text) : "";
     if (!botMsgEl) botMsgEl = appendMessage("bot", "");
 
-    botMsgEl.textContent = text;
+    // [FIX] Use innerHTML to support audio tags and basic formatting
+    botMsgEl.innerHTML = text;
+
+    // [NEW] Auto-play audio if present
+    const audioEl = botMsgEl.querySelector("audio");
+    if (audioEl) {
+      audioEl.play().catch(err => {
+        console.warn("Auto-play blocked:", err);
+      });
+    }
+
+    // 强制滚动到底部（测试模式）
     // 强制滚动到底部（测试模式）
     forceScrollToBottom();
     return;

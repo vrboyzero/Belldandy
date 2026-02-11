@@ -144,7 +144,7 @@ var FeishuChannel = /** @class */ (function () {
     };
     FeishuChannel.prototype.handleMessage = function (data) {
         return __awaiter(this, void 0, void 0, function () {
-            var message, sender, chatId, msgId, firstKey, text, contentObj, history, runInput, stream, replyText, _a, stream_1, stream_1_1, item, e_1_1, e_2;
+            var message, sender, chatId, msgId, firstKey, text, contentObj, history, runInput, stream, replyText, _a, stream_1, stream_1_1, item, e_1_1, sanitized, e_2;
             var _b, e_1, _c, _d;
             var _e, _f;
             return __generator(this, function (_g) {
@@ -268,8 +268,12 @@ var FeishuChannel = /** @class */ (function () {
                     case 12: return [7 /*endfinally*/];
                     case 13:
                         if (!replyText) return [3 /*break*/, 15];
-                        // [PERSISTENCE] Add Assistant Message to Store
-                        this.conversationStore.addMessage(chatId, "assistant", replyText);
+                        sanitized = replyText
+                            .replace(/<audio[^>]*>.*?<\/audio>/gi, "")
+                            .replace(/\[Download\]\([^)]*\/generated\/[^)]*\)/gi, "")
+                            .replace(/\n{3,}/g, "\n\n")
+                            .trim();
+                        this.conversationStore.addMessage(chatId, "assistant", sanitized || replyText);
                         return [4 /*yield*/, this.reply(msgId, replyText)];
                     case 14:
                         _g.sent();

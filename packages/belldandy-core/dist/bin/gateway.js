@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { OpenAIChatAgent, ToolEnabledAgent, ensureWorkspace, loadWorkspaceFiles, buildSystemPrompt, ConversationStore, loadModelFallbacks, } from "@belldandy/agent";
-import { ToolExecutor, DEFAULT_POLICY, fetchTool, applyPatchTool, fileReadTool, fileWriteTool, fileDeleteTool, listFilesTool, createMemorySearchTool, createMemoryGetTool, browserOpenTool, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserGetContentTool, cameraSnapTool, imageGenerateTool, textToSpeechTool, runCommandTool, methodListTool, methodReadTool, methodCreateTool, methodSearchTool, logReadTool, logSearchTool, createCronTool, createServiceRestartTool, switchFacetTool, } from "@belldandy/skills";
+import { ToolExecutor, DEFAULT_POLICY, fetchTool, applyPatchTool, fileReadTool, fileWriteTool, fileDeleteTool, listFilesTool, createMemorySearchTool, createMemoryGetTool, browserOpenTool, browserNavigateTool, browserClickTool, browserTypeTool, browserScreenshotTool, browserGetContentTool, cameraSnapTool, imageGenerateTool, textToSpeechTool, synthesizeSpeech, runCommandTool, methodListTool, methodReadTool, methodCreateTool, methodSearchTool, logReadTool, logSearchTool, createCronTool, createServiceRestartTool, switchFacetTool, } from "@belldandy/skills";
 import { MemoryStore, MemoryIndexer, listMemoryFiles, ensureMemoryDir } from "@belldandy/memory";
 import { RelayServer } from "@belldandy/browser";
 import { FeishuChannel } from "@belldandy/channels";
@@ -180,6 +180,9 @@ const openaiApiKey = readEnv("BELLDANDY_OPENAI_API_KEY");
 const openaiModel = readEnv("BELLDANDY_OPENAI_MODEL");
 const openaiStream = (readEnv("BELLDANDY_OPENAI_STREAM") ?? "true") !== "false";
 const openaiSystemPrompt = readEnv("BELLDANDY_OPENAI_SYSTEM_PROMPT");
+const injectAgents = (readEnv("BELLDANDY_INJECT_AGENTS") ?? "true") !== "false";
+const injectSoul = (readEnv("BELLDANDY_INJECT_SOUL") ?? "true") !== "false";
+const injectMemory = (readEnv("BELLDANDY_INJECT_MEMORY") ?? "true") !== "false";
 const toolsEnabled = (readEnv("BELLDANDY_TOOLS_ENABLED") ?? "false") === "true";
 const agentTimeoutMsRaw = readEnv("BELLDANDY_AGENT_TIMEOUT_MS");
 const agentTimeoutMs = agentTimeoutMsRaw ? Math.max(5000, parseInt(agentTimeoutMsRaw, 10) || 120_000) : undefined;
@@ -246,11 +249,20 @@ if (!fs.existsSync(stateDir)) {
         // ignore
     }
 }
-// 1.5 Ensure methods dir exists
+// 1.5 Ensure methods and facets dir exists
 const methodsDir = path.join(stateDir, "methods");
 if (!fs.existsSync(methodsDir)) {
     try {
         fs.mkdirSync(methodsDir, { recursive: true });
+    }
+    catch {
+        // ignore
+    }
+}
+const facetsDir = path.join(stateDir, "facets");
+if (!fs.existsSync(facetsDir)) {
+    try {
+        fs.mkdirSync(facetsDir, { recursive: true });
     }
     catch {
         // ignore
@@ -382,6 +394,9 @@ const dynamicSystemPrompt = buildSystemPrompt({
     extraSystemPrompt: openaiSystemPrompt,
     userTimezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
     currentTime: new Date().toISOString(),
+    injectAgents,
+    injectSoul,
+    injectMemory,
 });
 // 8. Agent Factory (only for openai provider)
 const createAgent = agentProvider === "openai"
@@ -390,18 +405,20 @@ const createAgent = agentProvider === "openai"
         if (!openaiApiKey) {
             throw new Error("CONFIG_REQUIRED");
         }
-        // Dynamic TTS Check
-        const ttsEnabledPath = path.join(stateDir, "TTS_ENABLED");
-        const isTtsEnabled = fs.existsSync(ttsEnabledPath);
+        // Dynamic TTS Check: env explicit "false" wins; otherwise env "true" or signal file
+        const ttsEnv = process.env.BELLDANDY_TTS_ENABLED;
+        const isTtsEnabled = ttsEnv === "false"
+            ? false
+            : ttsEnv === "true" || fs.existsSync(path.join(stateDir, "TTS_ENABLED"));
         let currentSystemPrompt = dynamicSystemPrompt;
         if (isTtsEnabled) {
             currentSystemPrompt += `
 
 ## [SYSTEM MODE: VOICE/TTS ENABLED]
-The user has enabled text-to-speech.
-You MUST generate spoken audio for your response using the 'text_to_speech' tool.
-Do this for every single message unless the user explicitly asks you to stop.
-Use the 'edge' provider by default for free, high-quality speech.`;
+The user has enabled text-to-speech. Audio will be generated automatically by the system.
+You do NOT need to call any TTS tool — just respond with text as usual.
+Do NOT include any <audio> HTML tags or [Download] links in your response.
+Keep responses concise and natural for spoken delivery.`;
         }
         if (toolsEnabled) {
             return new ToolEnabledAgent({
@@ -436,6 +453,13 @@ const conversationStore = new ConversationStore({
     dataDir: sessionsDir,
     maxHistory: 50, // Default history length
 });
+const ttsEnabledPath = path.join(stateDir, "TTS_ENABLED");
+const isTtsEnabledFn = () => {
+    const ttsEnv = process.env.BELLDANDY_TTS_ENABLED;
+    if (ttsEnv === "false")
+        return false;
+    return ttsEnv === "true" || fs.existsSync(ttsEnabledPath);
+};
 const server = await startGatewayServer({
     port,
     host,
@@ -446,6 +470,14 @@ const server = await startGatewayServer({
     conversationStore: conversationStore, // Pass shared instance
     onActivity,
     logger,
+    ttsEnabled: isTtsEnabledFn,
+    ttsSynthesize: async (text) => {
+        const result = await synthesizeSpeech({ text, stateDir });
+        if (result) {
+            logger.info("tts-auto", `Audio generated: ${result.webPath}`);
+        }
+        return result;
+    },
 });
 // 绑定 broadcast 给 service_restart 工具使用
 serverBroadcast = (msg) => server.broadcast(msg);
