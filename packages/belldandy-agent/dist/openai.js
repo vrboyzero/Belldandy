@@ -138,6 +138,7 @@ export class OpenAIChatAgent {
         const payload = {
             model: profile.model,
             messages,
+            max_tokens: 4096,
             stream: this.opts.stream,
         };
         return {

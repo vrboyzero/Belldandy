@@ -348,15 +348,13 @@ export class ToolEnabledAgent implements BelldandyAgent {
       const payload: Record<string, unknown> = {
         model: "__PLACEHOLDER__", // 将由 buildRequest 覆盖
         messages,
+        max_tokens: 4096,
         stream: false, // 工具调用模式使用非流式简化解析
       };
 
       if (tools && tools.length > 0) {
         payload.tools = tools;
         payload.tool_choice = "auto";
-        // Kimi K2.5 requires thinking mode to be disabled when using tool calls
-        // https://platform.moonshot.cn/docs/api/chat
-        payload.thinking = { type: "disabled" };
       }
 
       // 使用容灾客户端发送请求

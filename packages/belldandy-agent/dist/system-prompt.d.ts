@@ -17,6 +17,8 @@ export type SystemPromptParams = {
     injectSoul?: boolean;
     /** 是否注入 MEMORY.md (默认 true) */
     injectMemory?: boolean;
+    /** 最大字符数限制，超过则按优先级截断低优先级段落（0 或 undefined 表示不限制） */
+    maxChars?: number;
 };
 /**
  * 构建完整的 System Prompt

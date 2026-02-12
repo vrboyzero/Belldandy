@@ -250,6 +250,8 @@ const openaiSystemPrompt = readEnv("BELLDANDY_OPENAI_SYSTEM_PROMPT");
 const injectAgents = (readEnv("BELLDANDY_INJECT_AGENTS") ?? "true") !== "false";
 const injectSoul = (readEnv("BELLDANDY_INJECT_SOUL") ?? "true") !== "false";
 const injectMemory = (readEnv("BELLDANDY_INJECT_MEMORY") ?? "true") !== "false";
+const maxSystemPromptCharsRaw = readEnv("BELLDANDY_MAX_SYSTEM_PROMPT_CHARS");
+const maxSystemPromptChars = maxSystemPromptCharsRaw ? parseInt(maxSystemPromptCharsRaw, 10) || 0 : 0;
 
 
 const toolsEnabled = (readEnv("BELLDANDY_TOOLS_ENABLED") ?? "false") === "true";
@@ -491,7 +493,9 @@ const dynamicSystemPrompt = buildSystemPrompt({
   injectAgents,
   injectSoul,
   injectMemory,
+  maxChars: maxSystemPromptChars,
 });
+logger.info("system-prompt", `length=${dynamicSystemPrompt.length} chars${maxSystemPromptChars ? `, limit=${maxSystemPromptChars}` : ""}`);
 
 // 8. Agent Factory (only for openai provider)
 const createAgent = agentProvider === "openai"
@@ -551,7 +555,7 @@ fs.mkdirSync(sessionsDir, { recursive: true });
 
 const conversationStore = new ConversationStore({
   dataDir: sessionsDir,
-  maxHistory: 50, // Default history length
+  maxHistory: parseInt(readEnv("BELLDANDY_MAX_HISTORY") || "50", 10),
 });
 
 const ttsEnabledPath = path.join(stateDir, "TTS_ENABLED");

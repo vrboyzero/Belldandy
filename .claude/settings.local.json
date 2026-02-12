@@ -17,7 +17,11 @@
       "WebFetch(domain:www.npmjs.com)",
       "WebFetch(domain:github.com)",
       "Bash(npm view:*)",
-      "WebFetch(domain:help.aliyun.com)"
+      "WebFetch(domain:help.aliyun.com)",
+      "WebFetch(domain:docs.aicodewith.com)",
+      "Bash(powershell -NoProfile -Command \"Get-ChildItem ''C:\\\\Users\\\\admin\\\\.belldandy\\\\'' -Filter ''*.md'' -File | Select-Object Name, @{N=''Size\\(bytes\\)'';E={$_Length}} | Format-Table -AutoSize\")",
+      "Bash(powershell:*)",
+      "mcp__filesystem__read_text_file"
     ]
   }
 }
