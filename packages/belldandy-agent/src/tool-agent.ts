@@ -37,7 +37,7 @@ export type ToolEnabledAgentOptions = {
 type Message =
   | { role: "system"; content: string }
   | { role: "user"; content: string | Array<any> }
-  | { role: "assistant"; content?: string | null; tool_calls?: OpenAIToolCall[] }
+  | { role: "assistant"; content?: string | null; tool_calls?: OpenAIToolCall[]; reasoning_content?: string }
   | { role: "tool"; tool_call_id: string; content: string };
 
 type OpenAIToolCall = {
@@ -186,6 +186,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
           role: "assistant",
           content: response.content || undefined,
           tool_calls: toolCalls,
+          reasoning_content: response.reasoning_content,
         });
 
         // 执行工具调用
@@ -343,7 +344,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
   private async callModel(
     messages: Message[],
     tools?: { type: "function"; function: { name: string; description: string; parameters: object } }[]
-  ): Promise<{ ok: true; content: string; toolCalls?: OpenAIToolCall[] } | { ok: false; error: string }> {
+  ): Promise<{ ok: true; content: string; toolCalls?: OpenAIToolCall[]; reasoning_content?: string } | { ok: false; error: string }> {
     try {
       const payload: Record<string, unknown> = {
         model: "__PLACEHOLDER__", // 将由 buildRequest 覆盖
@@ -362,7 +363,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
         timeoutMs: this.opts.timeoutMs,
         buildRequest: (profile) => {
           // 替换占位符为实际 profile 的模型名
-          const actualPayload = { ...payload, model: profile.model };
+          // 清理 messages 中的 undefined 字段，确保 payload干净
+          // 并针对特定模型（如 Kimi）注入缺失的 reasoning_content
+          const cleanMessages = messages.map(m => cleanupMessage(m, profile.model));
+          const actualPayload = { ...payload, model: profile.model, messages: cleanMessages };
           return {
             url: buildUrl(profile.baseUrl, "/chat/completions"),
             init: {
@@ -392,8 +396,10 @@ export class ToolEnabledAgent implements BelldandyAgent {
       const message = choice.message;
       const content = typeof message?.content === "string" ? message.content : "";
       const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls as OpenAIToolCall[] : undefined;
+      // 兼容 DeepSeek/Kimi 等思考模型
+      const reasoning_content = typeof message?.reasoning_content === "string" ? message.reasoning_content : undefined;
 
-      return { ok: true, content, toolCalls };
+      return { ok: true, content, toolCalls, reasoning_content };
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
         return { ok: false, error: `模型调用超时（${this.opts.timeoutMs}ms）` };
@@ -430,6 +436,31 @@ function buildInitialMessages(
   messages.push({ role: "user", content: userContent });
 
   return messages;
+}
+
+// 辅助函数：转换 Message 对象为 OpenAI 格式（去除 undefined 字段）
+function cleanupMessage(msg: Message, modelId?: string): any {
+  if (msg.role === "assistant") {
+    // 显式保留 reasoning_content，即使它不是标准 OpenAI 字段
+    // 因为某些兼容模型（如 Kimi）需要它作为历史上下文
+    const cleaned: any = {
+      role: msg.role,
+      content: msg.content,
+      tool_calls: msg.tool_calls,
+      reasoning_content: msg.reasoning_content,
+    };
+
+    // [兼容性修复] 针对 Kimi/DeepSeek 等思考模型
+    // 如果历史消息中缺少 reasoning_content（例如来自非思考模型 Claude），
+    // 且当前请求的目标模型是思考模型，则注入空思考占位符，防止 API 报错
+    const isReasoningModel = modelId && (modelId.includes("kimi") || modelId.includes("deepseek"));
+    if (isReasoningModel && msg.tool_calls && !msg.reasoning_content) {
+      cleaned.reasoning_content = "（思考内容已省略）";
+    }
+
+    return cleaned;
+  }
+  return msg;
 }
 
 function safeParseJson(str: string): JsonObject {

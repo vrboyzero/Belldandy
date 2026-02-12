@@ -285,10 +285,9 @@ export const browserClickTool: Tool = {
         parameters: {
             type: "object",
             properties: {
-                selector: { type: "string", description: "CSS selector for the element to click." },
-                id: { type: "number", description: "The numeric ID from browser_snapshot (e.g. 42)." },
+                selector: { type: "string", description: "CSS selector for the element to click. (Provide either selector OR id)" },
+                id: { type: "number", description: "The numeric ID from browser_snapshot (e.g. 42). (Provide either selector OR id)" },
             },
-            oneOf: [{ required: ["selector"] }, { required: ["id"] }],
         },
     },
     execute: async (args, context) => {
@@ -322,12 +321,11 @@ export const browserTypeTool: Tool = {
         parameters: {
             type: "object",
             properties: {
-                selector: { type: "string", description: "CSS selector for the input element." },
-                id: { type: "number", description: "The numeric ID from browser_snapshot (e.g. 42)." },
+                selector: { type: "string", description: "CSS selector for the input element. (Provide either selector OR id)" },
+                id: { type: "number", description: "The numeric ID from browser_snapshot (e.g. 42). (Provide either selector OR id)" },
                 text: { type: "string", description: "The text to type." },
             },
             required: ["text"],
-            oneOf: [{ required: ["selector"] }, { required: ["id"] }],
         },
     },
     execute: async (args, context) => {
