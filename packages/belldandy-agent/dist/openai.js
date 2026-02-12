@@ -1,14 +1,36 @@
 import { FailoverClient } from "./failover-client.js";
 import { buildUrl, preprocessMultimodalContent } from "./multimodal.js";
+/**
+ * 检测 API 协议类型
+ * - 如果指定了 forceProtocol 参数，优先使用该值
+ * - 否则根据 baseUrl 自动检测
+ * - Anthropic 协议：Anthropic 官方、Kimi Code 等
+ * - OpenAI 协议：OpenAI、Azure、Moonshot、Gemini 等
+ */
+function detectProtocol(baseUrl, forceProtocol) {
+    // 优先使用强制指定的协议
+    if (forceProtocol) {
+        return forceProtocol;
+    }
+    const lowerUrl = baseUrl.toLowerCase();
+    // Anthropic 官方 API 或兼容端点
+    if (lowerUrl.includes("anthropic.com") || lowerUrl.includes("kimi.com/coding")) {
+        return "anthropic";
+    }
+    return "openai";
+}
 export class OpenAIChatAgent {
     opts;
     failoverClient;
+    protocol;
     constructor(opts) {
         this.opts = {
             ...opts,
             timeoutMs: opts.timeoutMs ?? 60_000,
             stream: opts.stream ?? true,
         };
+        // 检测 API 协议类型（优先使用用户指定的协议）
+        this.protocol = detectProtocol(opts.baseUrl, opts.protocol);
         // 初始化容灾客户端
         this.failoverClient = new FailoverClient({
             primary: { id: "primary", baseUrl: opts.baseUrl, apiKey: opts.apiKey, model: opts.model },
@@ -36,24 +58,7 @@ export class OpenAIChatAgent {
             // 使用容灾客户端发送请求
             const { response: res } = await this.failoverClient.fetchWithFailover({
                 timeoutMs: this.opts.timeoutMs,
-                buildRequest: (profile) => {
-                    const payload = {
-                        model: profile.model,
-                        messages,
-                        stream: this.opts.stream,
-                    };
-                    return {
-                        url: buildUrl(profile.baseUrl, "/chat/completions"),
-                        init: {
-                            method: "POST",
-                            headers: {
-                                "content-type": "application/json",
-                                authorization: `Bearer ${profile.apiKey}`,
-                            },
-                            body: JSON.stringify(payload),
-                        },
-                    };
-                },
+                buildRequest: (profile) => this.buildRequest(profile, messages),
             });
             if (!res.ok) {
                 const text = await safeReadText(res);
@@ -63,7 +68,7 @@ export class OpenAIChatAgent {
             }
             if (!this.opts.stream) {
                 const json = (await res.json());
-                const content = getNonStreamContent(json) ?? "";
+                const content = this.getNonStreamContent(json);
                 yield* emitChunkedFinal(content);
                 return;
             }
@@ -74,7 +79,7 @@ export class OpenAIChatAgent {
                 return;
             }
             let out = "";
-            for await (const item of parseSseStream(body)) { // cast body to any to satisfy ts if needed
+            for await (const item of parseSseStream(body, this.protocol)) {
                 if (item.type === "delta") {
                     out += item.delta;
                     yield item;
@@ -99,9 +104,66 @@ export class OpenAIChatAgent {
             yield { type: "status", status: "error" };
         }
     }
+    buildRequest(profile, messages) {
+        if (this.protocol === "anthropic") {
+            // Anthropic 协议：提取 system 消息
+            const systemMessage = messages.find(m => m.role === "system")?.content;
+            const chatMessages = messages.filter(m => m.role !== "system");
+            const payload = {
+                model: profile.model,
+                messages: chatMessages,
+                max_tokens: 4096,
+                stream: this.opts.stream,
+            };
+            if (systemMessage) {
+                payload.system = systemMessage;
+            }
+            // 标准 Anthropic API headers
+            // 注意：某些服务（如 Kimi Code）可能有额外的客户端校验
+            const headers = {
+                "content-type": "application/json",
+                "x-api-key": profile.apiKey,
+                "anthropic-version": "2023-06-01",
+            };
+            return {
+                url: buildUrl(profile.baseUrl, "/v1/messages"),
+                init: {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify(payload),
+                },
+            };
+        }
+        // OpenAI 协议
+        const payload = {
+            model: profile.model,
+            messages,
+            stream: this.opts.stream,
+        };
+        return {
+            url: buildUrl(profile.baseUrl, "/chat/completions"),
+            init: {
+                method: "POST",
+                headers: {
+                    "content-type": "application/json",
+                    authorization: `Bearer ${profile.apiKey}`,
+                },
+                body: JSON.stringify(payload),
+            },
+        };
+    }
+    getNonStreamContent(json) {
+        if (this.protocol === "anthropic") {
+            // Anthropic 格式：{ content: [{ type: "text", text: "..." }] }
+            const content = json.content;
+            return content?.[0]?.text ?? "";
+        }
+        // OpenAI 格式：{ choices: [{ message: { content: "..." } }] }
+        const choices = json.choices;
+        return choices?.[0]?.message?.content ?? "";
+    }
 }
-function buildMessages(systemPrompt, userContent, // using any to avoid circular dependency issues or just treating as opaque json
-history) {
+function buildMessages(systemPrompt, userContent, history) {
     const messages = [];
     // Layer 1: System
     if (systemPrompt && systemPrompt.trim()) {
@@ -124,11 +186,6 @@ async function safeReadText(res) {
         return "";
     }
 }
-function getNonStreamContent(json) {
-    const choices = json.choices;
-    const content = choices?.[0]?.message?.content;
-    return typeof content === "string" ? content : null;
-}
 async function* emitChunkedFinal(text) {
     const chunks = splitText(text, 16);
     let out = "";
@@ -148,7 +205,7 @@ function splitText(text, size) {
     }
     return out;
 }
-async function* parseSseStream(body) {
+async function* parseSseStream(body, protocol) {
     const reader = body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
@@ -175,9 +232,24 @@ async function* parseSseStream(body) {
                 }
                 try {
                     const json = JSON.parse(data);
-                    const delta = json?.choices?.[0]?.delta?.content;
-                    if (typeof delta === "string" && delta.length) {
-                        yield { type: "delta", delta };
+                    if (protocol === "anthropic") {
+                        // Anthropic SSE 格式
+                        // { type: "content_block_delta", delta: { type: "text_delta", text: "..." } }
+                        if (json.type === "content_block_delta" && json.delta?.text) {
+                            yield { type: "delta", delta: json.delta.text };
+                        }
+                        // 消息结束标记
+                        if (json.type === "message_stop") {
+                            yield { type: "final" };
+                            return;
+                        }
+                    }
+                    else {
+                        // OpenAI SSE 格式
+                        const delta = json?.choices?.[0]?.delta?.content;
+                        if (typeof delta === "string" && delta.length) {
+                            yield { type: "delta", delta };
+                        }
                     }
                 }
                 catch {

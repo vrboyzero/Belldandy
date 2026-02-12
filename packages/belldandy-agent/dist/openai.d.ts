@@ -14,11 +14,18 @@ export type OpenAIChatAgentOptions = {
     failoverLogger?: FailoverLogger;
     /** 视频文件上传专用配置（当聊天代理不支持 /files 端点时） */
     videoUploadConfig?: VideoUploadConfig;
+    /** 强制指定 API 协议（默认自动检测） */
+    protocol?: ApiProtocol;
 };
+type ApiProtocol = "openai" | "anthropic";
 export declare class OpenAIChatAgent implements BelldandyAgent {
     private readonly opts;
     private readonly failoverClient;
+    private readonly protocol;
     constructor(opts: OpenAIChatAgentOptions);
     run(input: AgentRunInput): AsyncIterable<AgentStreamItem>;
+    private buildRequest;
+    private getNonStreamContent;
 }
+export {};
 //# sourceMappingURL=openai.d.ts.map

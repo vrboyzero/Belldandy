@@ -17,12 +17,38 @@ export type OpenAIChatAgentOptions = {
   failoverLogger?: FailoverLogger;
   /** 视频文件上传专用配置（当聊天代理不支持 /files 端点时） */
   videoUploadConfig?: VideoUploadConfig;
+  /** 强制指定 API 协议（默认自动检测） */
+  protocol?: ApiProtocol;
 };
+
+type ApiProtocol = "openai" | "anthropic";
+
+/**
+ * 检测 API 协议类型
+ * - 如果指定了 forceProtocol 参数，优先使用该值
+ * - 否则根据 baseUrl 自动检测
+ * - Anthropic 协议：Anthropic 官方、Kimi Code 等
+ * - OpenAI 协议：OpenAI、Azure、Moonshot、Gemini 等
+ */
+function detectProtocol(baseUrl: string, forceProtocol?: ApiProtocol): ApiProtocol {
+  // 优先使用强制指定的协议
+  if (forceProtocol) {
+    return forceProtocol;
+  }
+
+  const lowerUrl = baseUrl.toLowerCase();
+  // Anthropic 官方 API 或兼容端点
+  if (lowerUrl.includes("anthropic.com") || lowerUrl.includes("kimi.com/coding")) {
+    return "anthropic";
+  }
+  return "openai";
+}
 
 export class OpenAIChatAgent implements BelldandyAgent {
   private readonly opts: Required<Pick<OpenAIChatAgentOptions, "timeoutMs" | "stream">> &
     Omit<OpenAIChatAgentOptions, "timeoutMs" | "stream">;
   private readonly failoverClient: FailoverClient;
+  private readonly protocol: ApiProtocol;
 
   constructor(opts: OpenAIChatAgentOptions) {
     this.opts = {
@@ -30,6 +56,9 @@ export class OpenAIChatAgent implements BelldandyAgent {
       timeoutMs: opts.timeoutMs ?? 60_000,
       stream: opts.stream ?? true,
     };
+
+    // 检测 API 协议类型（优先使用用户指定的协议）
+    this.protocol = detectProtocol(opts.baseUrl, opts.protocol);
 
     // 初始化容灾客户端
     this.failoverClient = new FailoverClient({
@@ -63,24 +92,7 @@ export class OpenAIChatAgent implements BelldandyAgent {
       // 使用容灾客户端发送请求
       const { response: res } = await this.failoverClient.fetchWithFailover({
         timeoutMs: this.opts.timeoutMs,
-        buildRequest: (profile) => {
-          const payload = {
-            model: profile.model,
-            messages,
-            stream: this.opts.stream,
-          };
-          return {
-            url: buildUrl(profile.baseUrl, "/chat/completions"),
-            init: {
-              method: "POST",
-              headers: {
-                "content-type": "application/json",
-                authorization: `Bearer ${profile.apiKey}`,
-              },
-              body: JSON.stringify(payload),
-            },
-          };
-        },
+        buildRequest: (profile) => this.buildRequest(profile, messages),
       });
 
       if (!res.ok) {
@@ -92,7 +104,7 @@ export class OpenAIChatAgent implements BelldandyAgent {
 
       if (!this.opts.stream) {
         const json = (await res.json()) as JsonObject;
-        const content = getNonStreamContent(json) ?? "";
+        const content = this.getNonStreamContent(json);
         yield* emitChunkedFinal(content);
         return;
       }
@@ -105,7 +117,7 @@ export class OpenAIChatAgent implements BelldandyAgent {
       }
 
       let out = "";
-      for await (const item of parseSseStream(body as any)) { // cast body to any to satisfy ts if needed
+      for await (const item of parseSseStream(body as any, this.protocol)) {
         if (item.type === "delta") {
           out += item.delta;
           yield item;
@@ -130,12 +142,82 @@ export class OpenAIChatAgent implements BelldandyAgent {
       yield { type: "status", status: "error" };
     }
   }
+
+  private buildRequest(
+    profile: { baseUrl: string; apiKey: string; model: string },
+    messages: Array<{ role: string; content: any }>
+  ): { url: string; init: RequestInit } {
+    if (this.protocol === "anthropic") {
+      // Anthropic 协议：提取 system 消息
+      const systemMessage = messages.find(m => m.role === "system")?.content;
+      const chatMessages = messages.filter(m => m.role !== "system");
+
+      const payload: any = {
+        model: profile.model,
+        messages: chatMessages,
+        max_tokens: 4096,
+        stream: this.opts.stream,
+      };
+
+      if (systemMessage) {
+        payload.system = systemMessage;
+      }
+
+      // 标准 Anthropic API headers
+      // 注意：某些服务（如 Kimi Code）可能有额外的客户端校验
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+        "x-api-key": profile.apiKey,
+        "anthropic-version": "2023-06-01",
+      };
+
+      return {
+        url: buildUrl(profile.baseUrl, "/v1/messages"),
+        init: {
+          method: "POST",
+          headers,
+          body: JSON.stringify(payload),
+        },
+      };
+    }
+
+    // OpenAI 协议
+    const payload = {
+      model: profile.model,
+      messages,
+      stream: this.opts.stream,
+    };
+
+    return {
+      url: buildUrl(profile.baseUrl, "/chat/completions"),
+      init: {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${profile.apiKey}`,
+        },
+        body: JSON.stringify(payload),
+      },
+    };
+  }
+
+  private getNonStreamContent(json: JsonObject): string {
+    if (this.protocol === "anthropic") {
+      // Anthropic 格式：{ content: [{ type: "text", text: "..." }] }
+      const content = (json.content as unknown) as Array<any> | undefined;
+      return content?.[0]?.text ?? "";
+    }
+
+    // OpenAI 格式：{ choices: [{ message: { content: "..." } }] }
+    const choices = (json.choices as unknown) as Array<any> | undefined;
+    return choices?.[0]?.message?.content ?? "";
+  }
 }
 
 
 function buildMessages(
   systemPrompt: string | undefined,
-  userContent: string | Array<any>, // using any to avoid circular dependency issues or just treating as opaque json
+  userContent: string | Array<any>,
   history?: Array<{ role: "user" | "assistant"; content: string | Array<any> }>,
 ) {
   const messages: Array<{ role: "system" | "user" | "assistant"; content: any }> = [];
@@ -165,12 +247,6 @@ async function safeReadText(res: Response): Promise<string> {
   }
 }
 
-function getNonStreamContent(json: JsonObject): string | null {
-  const choices = (json.choices as unknown) as Array<any> | undefined;
-  const content = choices?.[0]?.message?.content;
-  return typeof content === "string" ? content : null;
-}
-
 async function* emitChunkedFinal(text: string): AsyncIterable<AgentStreamItem> {
   const chunks = splitText(text, 16);
   let out = "";
@@ -197,7 +273,10 @@ type ParsedSseItem =
   | { type: "final" }
   | { type: "error"; message: string };
 
-async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncIterable<ParsedSseItem> {
+async function* parseSseStream(
+  body: ReadableStream<Uint8Array>,
+  protocol: ApiProtocol
+): AsyncIterable<ParsedSseItem> {
   const reader = body.getReader();
   const decoder = new TextDecoder("utf-8");
   let buffer = "";
@@ -226,9 +305,24 @@ async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncIterable<
         }
         try {
           const json = JSON.parse(data) as any;
-          const delta = json?.choices?.[0]?.delta?.content;
-          if (typeof delta === "string" && delta.length) {
-            yield { type: "delta", delta };
+
+          if (protocol === "anthropic") {
+            // Anthropic SSE 格式
+            // { type: "content_block_delta", delta: { type: "text_delta", text: "..." } }
+            if (json.type === "content_block_delta" && json.delta?.text) {
+              yield { type: "delta", delta: json.delta.text };
+            }
+            // 消息结束标记
+            if (json.type === "message_stop") {
+              yield { type: "final" };
+              return;
+            }
+          } else {
+            // OpenAI SSE 格式
+            const delta = json?.choices?.[0]?.delta?.content;
+            if (typeof delta === "string" && delta.length) {
+              yield { type: "delta", delta };
+            }
           }
         } catch {
           yield { type: "error", message: "模型流解析失败" };
@@ -238,4 +332,3 @@ async function* parseSseStream(body: ReadableStream<Uint8Array>): AsyncIterable<
     }
   }
 }
-
