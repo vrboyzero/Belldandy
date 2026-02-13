@@ -262,6 +262,12 @@ function connect() {
       isReady = true;
       sendBtn.disabled = false;
       setStatus("ready");
+      // 重置 token 累计
+      sessionTotalTokens = 0;
+      ["tuSys","tuCtx","tuIn","tuOut","tuAll"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = "--";
+      });
       flushQueuedText();
 
       // 重连成功后隐藏重启倒计时浮层
@@ -569,6 +575,16 @@ function handleEvent(event, payload) {
     if (payload && payload.status === "restarting" && payload.countdown !== undefined) {
       showRestartCountdown(payload.countdown, payload.reason || "");
     }
+    // 运行中时给 token-usage 加 updating 样式
+    const tuEl = document.getElementById("tokenUsage");
+    if (tuEl && payload) {
+      if (payload.status === "running") tuEl.classList.add("updating");
+      else tuEl.classList.remove("updating");
+    }
+    return;
+  }
+  if (event === "token.usage") {
+    updateTokenUsage(payload);
     return;
   }
   if (event === "chat.delta") {
@@ -634,6 +650,32 @@ function showRestartCountdown(countdown, reason) {
     countdownEl.textContent = "…";
     setStatus("Restarting…");
   }
+}
+
+function formatTokenCount(n) {
+  if (n == null || n === 0) return "--";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "k";
+  return String(n);
+}
+
+let sessionTotalTokens = 0;
+
+function updateTokenUsage(payload) {
+  if (!payload) return;
+  const set = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = formatTokenCount(val);
+  };
+  set("tuSys", payload.systemPromptTokens);
+  set("tuCtx", payload.contextTokens);
+  set("tuIn", payload.inputTokens);
+  set("tuOut", payload.outputTokens);
+  // 会话累计：每次收到 usage 事件，累加 input + output
+  sessionTotalTokens += (payload.inputTokens || 0) + (payload.outputTokens || 0);
+  set("tuAll", sessionTotalTokens);
+  // 移除 updating 动画
+  const tuEl = document.getElementById("tokenUsage");
+  if (tuEl) tuEl.classList.remove("updating");
 }
 
 function flushQueuedText() {

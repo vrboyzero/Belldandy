@@ -18,8 +18,19 @@
     <header class="header">
       <div class="title">Belldandy WebChat (MVP)</div>
       <div style="display: flex; gap: 8px; align-items: center;">
+        <div class="token-usage" id="tokenUsage" title="Token Usage">
+          <span class="token-label">SYS</span><span class="token-val" id="tuSys">--</span>
+          <span class="token-sep">|</span>
+          <span class="token-label">CTX</span><span class="token-val" id="tuCtx">--</span>
+          <span class="token-sep">|</span>
+          <span class="token-label">IN</span><span class="token-val" id="tuIn">--</span>
+          <span class="token-sep">|</span>
+          <span class="token-label">OUT</span><span class="token-val" id="tuOut">--</span>
+          <span class="token-sep">|</span>
+          <span class="token-label">ALL</span><span class="token-val token-val-all" id="tuAll">--</span>
+        </div>
         <div class="status" id="status">disconnected</div>
-        <button id="openSettings" class="settings-btn" title="Settings">⚙️</button>
+        <button id="openSettings" class="settings-btn" title="Settings">&#x2699;&#xFE0F;</button>
       </div>
     </header>
 

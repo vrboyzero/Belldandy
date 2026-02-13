@@ -294,6 +294,51 @@ body::before {
   display: inline-block;
 }
 
+/* Token Usage Display */
+.token-usage {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--glass-surface);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  opacity: 0.8;
+  transition: opacity 0.3s;
+}
+.token-usage:hover {
+  opacity: 1;
+}
+.token-label {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.token-val {
+  color: var(--primary);
+  min-width: 20px;
+  text-align: right;
+}
+.token-val-all {
+  color: var(--secondary);
+}
+.token-sep {
+  color: rgba(255, 255, 255, 0.12);
+  margin: 0 1px;
+}
+.token-usage.updating .token-val {
+  animation: token-pulse 1s ease-in-out infinite;
+}
+@keyframes token-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
 /* Settings Button */
 .settings-btn {
   background: var(--glass-surface);

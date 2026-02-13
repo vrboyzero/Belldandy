@@ -60,7 +60,7 @@ const DEFAULT_METHODS = [
   "workspace.read",
   "workspace.write",
 ];
-const DEFAULT_EVENTS = ["chat.delta", "chat.final", "agent.status", "pairing.required"];
+const DEFAULT_EVENTS = ["chat.delta", "chat.final", "agent.status", "token.usage", "pairing.required"];
 
 export async function startGatewayServer(opts: GatewayServerOptions): Promise<GatewayServer> {
   ensureWebRoot(opts.webRoot);
@@ -477,6 +477,18 @@ async function handleReq(
               if (!isTts) {
                 sendEvent(ws, { type: "event", event: "chat.final", payload: { conversationId, text: item.text } });
               }
+            }
+            if (item.type === "usage") {
+              sendEvent(ws, { type: "event", event: "token.usage", payload: {
+                conversationId,
+                systemPromptTokens: item.systemPromptTokens,
+                contextTokens: item.contextTokens,
+                inputTokens: item.inputTokens,
+                outputTokens: item.outputTokens,
+                cacheCreationTokens: item.cacheCreationTokens,
+                cacheReadTokens: item.cacheReadTokens,
+                modelCalls: item.modelCalls,
+              } });
             }
           }
 

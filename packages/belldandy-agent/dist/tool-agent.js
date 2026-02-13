@@ -86,6 +86,22 @@ export class ToolEnabledAgent {
         const generatedItems = [];
         let runSuccess = true;
         let runError;
+        // Usage 累加器
+        let totalInputTokens = 0;
+        let totalOutputTokens = 0;
+        let totalCacheCreation = 0;
+        let totalCacheRead = 0;
+        let modelCallCount = 0;
+        const buildUsageItem = () => ({
+            type: "usage",
+            systemPromptTokens: this.opts.systemPrompt ? estimateTokens(this.opts.systemPrompt) : 0,
+            contextTokens: (input.history ?? []).reduce((sum, m) => sum + estimateTokens(typeof m.content === "string" ? m.content : JSON.stringify(m.content)) + 4, 0),
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
+            cacheCreationTokens: totalCacheCreation,
+            cacheReadTokens: totalCacheRead,
+            modelCalls: modelCallCount,
+        });
         // 辅助函数：yield 并收集 items
         const yieldItem = async function* (item) {
             generatedItems.push(item);
@@ -95,9 +111,14 @@ export class ToolEnabledAgent {
             while (true) {
                 // 调用模型
                 const response = await this.callModel(messages, tools.length > 0 ? tools : undefined);
-                // 记录 usage 信息（Anthropic 协议返回缓存命中数据）
+                // 记录并累加 usage 信息
                 if (response.ok && response.usage) {
                     const u = response.usage;
+                    modelCallCount++;
+                    totalInputTokens += u.input_tokens;
+                    totalOutputTokens += u.output_tokens;
+                    totalCacheCreation += u.cache_creation_input_tokens ?? 0;
+                    totalCacheRead += u.cache_read_input_tokens ?? 0;
                     const parts = [`input=${u.input_tokens}`, `output=${u.output_tokens}`];
                     if (u.cache_creation_input_tokens)
                         parts.push(`cache_create=${u.cache_creation_input_tokens}`);
@@ -105,9 +126,13 @@ export class ToolEnabledAgent {
                         parts.push(`cache_read=${u.cache_read_input_tokens}`);
                     console.log(`[agent] [usage] ${parts.join(" ")}`);
                 }
+                else if (response.ok) {
+                    modelCallCount++;
+                }
                 if (!response.ok) {
                     runSuccess = false;
                     runError = response.error;
+                    yield* yieldItem(buildUsageItem());
                     yield* yieldItem({ type: "final", text: response.error });
                     yield* yieldItem({ type: "status", status: "error" });
                     return;
@@ -123,6 +148,7 @@ export class ToolEnabledAgent {
                 const toolCalls = response.toolCalls;
                 if (!toolCalls || toolCalls.length === 0) {
                     // 无工具调用，输出最终结果（已剥离协议块）
+                    yield* yieldItem(buildUsageItem());
                     yield* yieldItem({ type: "final", text: contentForDisplay });
                     yield* yieldItem({ type: "status", status: "done" });
                     return;
@@ -132,6 +158,7 @@ export class ToolEnabledAgent {
                 if (toolCallCount > this.opts.maxToolCalls) {
                     runSuccess = false;
                     runError = `工具调用次数超限（最大 ${this.opts.maxToolCalls} 次）`;
+                    yield* yieldItem(buildUsageItem());
                     yield* yieldItem({ type: "final", text: runError });
                     yield* yieldItem({ type: "status", status: "error" });
                     return;
@@ -361,7 +388,13 @@ export class ToolEnabledAgent {
             const content = typeof message?.content === "string" ? message.content : "";
             const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : undefined;
             const reasoning_content = typeof message?.reasoning_content === "string" ? message.reasoning_content : undefined;
-            return { ok: true, content, toolCalls, reasoning_content };
+            // 提取 OpenAI usage（prompt_tokens → input_tokens, completion_tokens → output_tokens）
+            const rawUsage = json.usage;
+            const usage = rawUsage ? {
+                input_tokens: rawUsage.prompt_tokens ?? rawUsage.input_tokens ?? 0,
+                output_tokens: rawUsage.completion_tokens ?? rawUsage.output_tokens ?? 0,
+            } : undefined;
+            return { ok: true, content, toolCalls, reasoning_content, usage };
         }
         catch (err) {
             if (err instanceof Error && err.name === "AbortError") {

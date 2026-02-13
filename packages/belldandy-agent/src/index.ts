@@ -102,12 +102,31 @@ export type AgentToolResult = {
   error?: string;
 };
 
+export type AgentUsage = {
+  type: "usage";
+  /** 系统提示词 token 估算 */
+  systemPromptTokens: number;
+  /** 上下文（历史+当前消息）token 估算 */
+  contextTokens: number;
+  /** API 实际 input tokens（ReAct 循环累加） */
+  inputTokens: number;
+  /** API 实际 output tokens（ReAct 循环累加） */
+  outputTokens: number;
+  /** Anthropic cache 创建 tokens */
+  cacheCreationTokens: number;
+  /** Anthropic cache 读取 tokens */
+  cacheReadTokens: number;
+  /** 本次 run 的模型调用次数 */
+  modelCalls: number;
+};
+
 export type AgentStreamItem =
   | AgentDelta
   | AgentFinal
   | AgentStatus
   | AgentToolCall
-  | AgentToolResult;
+  | AgentToolResult
+  | AgentUsage;
 
 export interface BelldandyAgent {
   run(input: AgentRunInput): AsyncIterable<AgentStreamItem>;
