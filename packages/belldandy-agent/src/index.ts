@@ -149,3 +149,24 @@ export { createHookRunner, type HookRunner, type HookRunnerLogger, type HookRunn
 
 // 多模态预处理（视频上传等）
 export { buildUrl, uploadFileToMoonshot, preprocessMultimodalContent, type PreprocessResult, type VideoUploadConfig } from "./multimodal.js";
+
+// Anthropic 原生协议支持（prompt caching、消息/工具转换）
+export {
+  convertMessagesToAnthropic,
+  convertToolsToAnthropic,
+  buildAnthropicRequest,
+  parseAnthropicResponse,
+  type AnthropicUsage,
+  type AnthropicRequestPayload,
+  type ParsedAnthropicResponse,
+} from "./anthropic.js";
+
+// 对话压缩
+export {
+  compactMessages,
+  needsCompaction,
+  estimateTokens,
+  estimateMessagesTokens,
+  type CompactionOptions,
+  type CompactionResult,
+} from "./compaction.js";

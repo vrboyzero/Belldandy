@@ -366,7 +366,7 @@ async function handleReq(
       }
 
       const conversationId = parsed.value.conversationId ?? crypto.randomUUID();
-      const history = ctx.conversationStore.getHistory(conversationId);
+      const { history } = await ctx.conversationStore.getHistoryCompacted(conversationId);
       ctx.conversationStore.addMessage(conversationId, "user", parsed.value.text);
 
       console.log("[Debug] Processing message.send. conversationId:", conversationId);

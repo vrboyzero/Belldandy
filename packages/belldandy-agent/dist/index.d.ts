@@ -74,4 +74,6 @@ export declare class MockAgent implements BelldandyAgent {
 export * from "./hooks.js";
 export { createHookRunner, type HookRunner, type HookRunnerLogger, type HookRunnerOptions } from "./hook-runner.js";
 export { buildUrl, uploadFileToMoonshot, preprocessMultimodalContent, type PreprocessResult, type VideoUploadConfig } from "./multimodal.js";
+export { convertMessagesToAnthropic, convertToolsToAnthropic, buildAnthropicRequest, parseAnthropicResponse, type AnthropicUsage, type AnthropicRequestPayload, type ParsedAnthropicResponse, } from "./anthropic.js";
+export { compactMessages, needsCompaction, estimateTokens, estimateMessagesTokens, type CompactionOptions, type CompactionResult, } from "./compaction.js";
 //# sourceMappingURL=index.d.ts.map

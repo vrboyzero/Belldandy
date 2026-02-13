@@ -38,4 +38,8 @@ export * from "./hooks.js";
 export { createHookRunner } from "./hook-runner.js";
 // 多模态预处理（视频上传等）
 export { buildUrl, uploadFileToMoonshot, preprocessMultimodalContent } from "./multimodal.js";
+// Anthropic 原生协议支持（prompt caching、消息/工具转换）
+export { convertMessagesToAnthropic, convertToolsToAnthropic, buildAnthropicRequest, parseAnthropicResponse, } from "./anthropic.js";
+// 对话压缩
+export { compactMessages, needsCompaction, estimateTokens, estimateMessagesTokens, } from "./compaction.js";
 //# sourceMappingURL=index.js.map

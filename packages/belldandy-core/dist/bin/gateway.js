@@ -180,6 +180,7 @@ const openaiApiKey = readEnv("BELLDANDY_OPENAI_API_KEY");
 const openaiModel = readEnv("BELLDANDY_OPENAI_MODEL");
 const openaiStream = (readEnv("BELLDANDY_OPENAI_STREAM") ?? "true") !== "false";
 const openaiSystemPrompt = readEnv("BELLDANDY_OPENAI_SYSTEM_PROMPT");
+const agentProtocol = readEnv("BELLDANDY_AGENT_PROTOCOL");
 const injectAgents = (readEnv("BELLDANDY_INJECT_AGENTS") ?? "true") !== "false";
 const injectSoul = (readEnv("BELLDANDY_INJECT_SOUL") ?? "true") !== "false";
 const injectMemory = (readEnv("BELLDANDY_INJECT_MEMORY") ?? "true") !== "false";
@@ -436,6 +437,7 @@ Keep responses concise and natural for spoken delivery.`;
                 fallbacks: modelFallbacks.length > 0 ? modelFallbacks : undefined,
                 failoverLogger: logger,
                 videoUploadConfig,
+                protocol: agentProtocol,
             });
         }
         return new OpenAIChatAgent({
@@ -447,6 +449,7 @@ Keep responses concise and natural for spoken delivery.`;
             fallbacks: modelFallbacks.length > 0 ? modelFallbacks : undefined,
             failoverLogger: logger,
             videoUploadConfig,
+            protocol: agentProtocol,
         });
     }
     : undefined;
@@ -456,6 +459,10 @@ fs.mkdirSync(sessionsDir, { recursive: true });
 const conversationStore = new ConversationStore({
     dataDir: sessionsDir,
     maxHistory: parseInt(readEnv("BELLDANDY_MAX_HISTORY") || "50", 10),
+    compaction: {
+        tokenThreshold: parseInt(readEnv("BELLDANDY_COMPACTION_THRESHOLD") || "12000", 10),
+        keepRecentCount: parseInt(readEnv("BELLDANDY_COMPACTION_KEEP_RECENT") || "6", 10),
+    },
 });
 const ttsEnabledPath = path.join(stateDir, "TTS_ENABLED");
 const isTtsEnabledFn = () => {

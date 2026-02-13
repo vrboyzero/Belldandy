@@ -8,6 +8,7 @@ import type { AgentRunInput, AgentStreamItem, BelldandyAgent, AgentHooks } from 
 import type { HookRunner } from "./hook-runner.js";
 import { type ModelProfile, type FailoverLogger } from "./failover-client.js";
 import { type VideoUploadConfig } from "./multimodal.js";
+type ApiProtocol = "openai" | "anthropic";
 export type ToolEnabledAgentOptions = {
     baseUrl: string;
     apiKey: string;
@@ -30,6 +31,8 @@ export type ToolEnabledAgentOptions = {
     failoverLogger?: FailoverLogger;
     /** 视频文件上传专用配置（当聊天代理不支持 /files 端点时） */
     videoUploadConfig?: VideoUploadConfig;
+    /** 强制指定 API 协议（默认自动检测） */
+    protocol?: ApiProtocol;
 };
 export declare class ToolEnabledAgent implements BelldandyAgent {
     private readonly opts;
@@ -38,4 +41,5 @@ export declare class ToolEnabledAgent implements BelldandyAgent {
     run(input: AgentRunInput): AsyncIterable<AgentStreamItem>;
     private callModel;
 }
+export {};
 //# sourceMappingURL=tool-agent.d.ts.map

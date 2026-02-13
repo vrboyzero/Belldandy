@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { needsCompaction, compactMessages } from "./compaction.js";
 /**
  * 会话存储
  * 用于管理对话上下文历史，支持文件持久化 (JSONL)
@@ -9,10 +10,12 @@ export class ConversationStore {
     maxHistory;
     ttlSeconds;
     dataDir;
+    compactionOpts;
     constructor(options = {}) {
         this.maxHistory = options.maxHistory ?? 20;
         this.ttlSeconds = options.ttlSeconds ?? 3600;
         this.dataDir = options.dataDir;
+        this.compactionOpts = options.compaction;
         if (this.dataDir) {
             fs.mkdirSync(this.dataDir, { recursive: true });
         }
@@ -162,6 +165,19 @@ export class ConversationStore {
                 .replace(/\n{3,}/g, "\n\n")
                 .trim() || m.content
         }));
+    }
+    /**
+     * 获取历史消息，自动应用压缩（如果配置了 compaction）。
+     * 当历史 token 超过阈值时，旧消息会被摘要替换。
+     */
+    async getHistoryCompacted(id, overrideOpts) {
+        const history = this.getHistory(id);
+        const opts = overrideOpts ?? this.compactionOpts;
+        if (!opts || !needsCompaction(history, opts)) {
+            return { history, compacted: false };
+        }
+        const result = await compactMessages(history, opts);
+        return { history: result.messages, compacted: result.compacted };
     }
 }
 //# sourceMappingURL=conversation.js.map

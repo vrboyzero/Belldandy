@@ -5,6 +5,7 @@
  */
 import { FailoverClient } from "./failover-client.js";
 import { buildUrl, preprocessMultimodalContent } from "./multimodal.js";
+import { buildAnthropicRequest, parseAnthropicResponse, } from "./anthropic.js";
 export class ToolEnabledAgent {
     opts;
     failoverClient;
@@ -93,6 +94,16 @@ export class ToolEnabledAgent {
             while (true) {
                 // 调用模型
                 const response = await this.callModel(messages, tools.length > 0 ? tools : undefined);
+                // 记录 usage 信息（Anthropic 协议返回缓存命中数据）
+                if (response.ok && response.usage) {
+                    const u = response.usage;
+                    const parts = [`input=${u.input_tokens}`, `output=${u.output_tokens}`];
+                    if (u.cache_creation_input_tokens)
+                        parts.push(`cache_create=${u.cache_creation_input_tokens}`);
+                    if (u.cache_read_input_tokens)
+                        parts.push(`cache_read=${u.cache_read_input_tokens}`);
+                    console.log(`[agent] [usage] ${parts.join(" ")}`);
+                }
                 if (!response.ok) {
                     runSuccess = false;
                     runError = response.error;
@@ -129,6 +140,7 @@ export class ToolEnabledAgent {
                     role: "assistant",
                     content: response.content || undefined,
                     tool_calls: toolCalls,
+                    reasoning_content: response.reasoning_content,
                 });
                 // 执行工具调用
                 for (const tc of toolCalls) {
@@ -273,22 +285,36 @@ export class ToolEnabledAgent {
     }
     async callModel(messages, tools) {
         try {
-            const payload = {
-                model: "__PLACEHOLDER__", // 将由 buildRequest 覆盖
-                messages,
-                max_tokens: 4096,
-                stream: false, // 工具调用模式使用非流式简化解析
-            };
-            if (tools && tools.length > 0) {
-                payload.tools = tools;
-                payload.tool_choice = "auto";
-            }
-            // 使用容灾客户端发送请求
+            // 用于记录实际使用的协议（由 buildRequest 内部决定）
+            let usedProtocol = "openai";
             const { response: res } = await this.failoverClient.fetchWithFailover({
                 timeoutMs: this.opts.timeoutMs,
                 buildRequest: (profile) => {
-                    // 替换占位符为实际 profile 的模型名
-                    const actualPayload = { ...payload, model: profile.model };
+                    // 按 profile 的 baseUrl 动态检测协议（而非全局固定）
+                    const profileProtocol = this.opts.protocol ?? detectProtocol(profile.baseUrl);
+                    usedProtocol = profileProtocol;
+                    if (profileProtocol === "anthropic") {
+                        return buildAnthropicRequest({
+                            profile,
+                            messages: messages,
+                            tools: tools,
+                            maxTokens: 4096,
+                            stream: false,
+                            enableCaching: true,
+                        });
+                    }
+                    // OpenAI 协议
+                    const cleanMessages = messages.map(m => cleanupMessage(m, profile.model));
+                    const payload = {
+                        model: profile.model,
+                        messages: cleanMessages,
+                        max_tokens: 4096,
+                        stream: false,
+                    };
+                    if (tools && tools.length > 0) {
+                        payload.tools = tools;
+                        payload.tool_choice = "auto";
+                    }
                     return {
                         url: buildUrl(profile.baseUrl, "/chat/completions"),
                         init: {
@@ -297,7 +323,7 @@ export class ToolEnabledAgent {
                                 "content-type": "application/json",
                                 authorization: `Bearer ${profile.apiKey}`,
                             },
-                            body: JSON.stringify(actualPayload),
+                            body: JSON.stringify(payload),
                         },
                     };
                 },
@@ -306,6 +332,20 @@ export class ToolEnabledAgent {
                 const text = await safeReadText(res);
                 return { ok: false, error: `模型调用失败（HTTP ${res.status}）：${text}` };
             }
+            // 按实际使用的协议解析响应
+            if (usedProtocol === "anthropic") {
+                const json = (await res.json());
+                const parsed = parseAnthropicResponse(json);
+                const toolCalls = parsed.toolCalls && parsed.toolCalls.length > 0
+                    ? parsed.toolCalls.map(tc => ({
+                        id: tc.id,
+                        type: "function",
+                        function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+                    }))
+                    : undefined;
+                return { ok: true, content: parsed.content, toolCalls, usage: parsed.usage };
+            }
+            // OpenAI 响应解析
             const json = (await res.json());
             const choice = json.choices?.[0];
             if (!choice) {
@@ -314,7 +354,8 @@ export class ToolEnabledAgent {
             const message = choice.message;
             const content = typeof message?.content === "string" ? message.content : "";
             const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls : undefined;
-            return { ok: true, content, toolCalls };
+            const reasoning_content = typeof message?.reasoning_content === "string" ? message.reasoning_content : undefined;
+            return { ok: true, content, toolCalls, reasoning_content };
         }
         catch (err) {
             if (err instanceof Error && err.name === "AbortError") {
@@ -343,6 +384,38 @@ function buildInitialMessages(systemPrompt, userContent, history) {
     // Layer 3: Current User Message
     messages.push({ role: "user", content: userContent });
     return messages;
+}
+/**
+ * 根据 baseUrl 自动检测 API 协议类型
+ */
+function detectProtocol(baseUrl) {
+    const lower = baseUrl.toLowerCase();
+    if (lower.includes("anthropic.com")) {
+        return "anthropic";
+    }
+    return "openai";
+}
+// 辅助函数：转换 Message 对象为 OpenAI 格式（去除 undefined 字段）
+function cleanupMessage(msg, modelId) {
+    if (msg.role === "assistant") {
+        // 显式保留 reasoning_content，即使它不是标准 OpenAI 字段
+        // 因为某些兼容模型（如 Kimi）需要它作为历史上下文
+        const cleaned = {
+            role: msg.role,
+            content: msg.content,
+            tool_calls: msg.tool_calls,
+            reasoning_content: msg.reasoning_content,
+        };
+        // [兼容性修复] 针对 Kimi/DeepSeek 等思考模型
+        // 如果历史消息中缺少 reasoning_content（例如来自非思考模型 Claude），
+        // 且当前请求的目标模型是思考模型，则注入空思考占位符，防止 API 报错
+        const isReasoningModel = modelId && (modelId.includes("kimi") || modelId.includes("deepseek"));
+        if (isReasoningModel && msg.tool_calls && !msg.reasoning_content) {
+            cleaned.reasoning_content = "（思考内容已省略）";
+        }
+        return cleaned;
+    }
+    return msg;
 }
 function safeParseJson(str) {
     try {

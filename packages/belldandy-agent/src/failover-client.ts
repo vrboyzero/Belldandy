@@ -82,20 +82,52 @@ export function isRetryableReason(reason: FailoverReason): boolean {
 
 // ─── Cooldown 管理 ────────────────────────────────────────────────────────
 
-/** 简单的内存级 Cooldown 管理器 */
+/** 简单的内存级 Cooldown 管理器（支持指数退避） */
 class CooldownManager {
     private readonly cooldowns = new Map<string, number>();
+    private readonly errorCounts = new Map<string, { count: number; lastFailure: number }>();
 
     /** 默认冷却 60 秒 */
     private readonly defaultCooldownMs: number;
+    /** 错误计数重置窗口（默认 24 小时） */
+    private readonly errorWindowMs: number;
 
-    constructor(cooldownMs = 60_000) {
+    constructor(cooldownMs = 60_000, errorWindowMs = 24 * 60 * 60 * 1000) {
         this.defaultCooldownMs = cooldownMs;
+        this.errorWindowMs = errorWindowMs;
     }
 
-    /** 将 profile 标记为冷却中 */
+    /**
+     * 将 profile 标记为冷却中。
+     * 如果提供了 durationMs 则使用该值（如 Retry-After），
+     * 否则使用指数退避：60s * 5^(errorCount-1)，上限 1 小时。
+     */
     mark(profileId: string, durationMs?: number): void {
-        const until = Date.now() + (durationMs ?? this.defaultCooldownMs);
+        // 更新错误计数
+        const now = Date.now();
+        const existing = this.errorCounts.get(profileId);
+        let errorCount: number;
+
+        if (existing && (now - existing.lastFailure) < this.errorWindowMs) {
+            errorCount = existing.count + 1;
+        } else {
+            errorCount = 1;
+        }
+        this.errorCounts.set(profileId, { count: errorCount, lastFailure: now });
+
+        // 计算冷却时间
+        let cooldownMs: number;
+        if (durationMs !== undefined) {
+            cooldownMs = durationMs;
+        } else {
+            // 指数退避：60s * 5^(n-1)，上限 1 小时
+            cooldownMs = Math.min(
+                this.defaultCooldownMs * Math.pow(5, errorCount - 1),
+                3_600_000,
+            );
+        }
+
+        const until = now + cooldownMs;
         this.cooldowns.set(profileId, until);
     }
 
@@ -110,6 +142,12 @@ class CooldownManager {
         return true;
     }
 
+    /** 标记 profile 成功，重置错误计数 */
+    markSuccess(profileId: string): void {
+        this.errorCounts.delete(profileId);
+        this.cooldowns.delete(profileId);
+    }
+
     /** 清除指定 profile 的冷却 */
     clear(profileId: string): void {
         this.cooldowns.delete(profileId);
@@ -118,6 +156,7 @@ class CooldownManager {
     /** 清除所有冷却 */
     clearAll(): void {
         this.cooldowns.clear();
+        this.errorCounts.clear();
     }
 }
 
@@ -217,6 +256,7 @@ export class FailoverClient {
 
                 // 成功（2xx）
                 if (response.ok) {
+                    this.cooldown.markSuccess(profileId);
                     if (attempts.length > 0) {
                         this.logger?.info(
                             "failover",
@@ -247,9 +287,11 @@ export class FailoverClient {
                     `⚠️ Profile "${profileId}" (${profile.model}) 失败: ${errorMsg}，尝试下一个...`,
                 );
 
-                // 对 rate_limit 和 billing 设置更长的冷却
+                // 对 rate_limit 和 billing 设置冷却
+                // 优先使用 Retry-After 响应头（Anthropic 会返回）
                 if (reason === "rate_limit") {
-                    this.cooldown.mark(profileId, 120_000); // 2 分钟
+                    const retryAfterMs = parseRetryAfter(response);
+                    this.cooldown.mark(profileId, retryAfterMs); // 有 Retry-After 用它，否则指数退避
                 } else if (reason === "billing") {
                     this.cooldown.mark(profileId, 600_000); // 10 分钟
                 } else {
@@ -313,6 +355,31 @@ export class FailoverClient {
 }
 
 // ─── 辅助函数 ─────────────────────────────────────────────────────────────
+
+/**
+ * 解析 Retry-After 响应头。
+ * 支持秒数（如 "30"）和 HTTP-date 格式。
+ * 返回 undefined 表示无有效值（交给指数退避处理）。
+ */
+function parseRetryAfter(response: Response): number | undefined {
+    const header = response.headers.get("retry-after");
+    if (!header) return undefined;
+
+    // 尝试解析为秒数
+    const seconds = Number(header);
+    if (Number.isFinite(seconds) && seconds > 0) {
+        return Math.ceil(seconds * 1000); // 转为毫秒
+    }
+
+    // 尝试解析为 HTTP-date
+    const date = Date.parse(header);
+    if (!Number.isNaN(date)) {
+        const delayMs = date - Date.now();
+        return delayMs > 0 ? delayMs : undefined;
+    }
+
+    return undefined;
+}
 
 /** 从 baseUrl 中提取 Provider 名称（用于日志） */
 function extractProvider(baseUrl: string): string {

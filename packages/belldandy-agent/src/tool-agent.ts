@@ -11,6 +11,13 @@ import type { HookRunner } from "./hook-runner.js";
 import type { HookAgentContext, HookToolContext } from "./hooks.js";
 import { FailoverClient, type ModelProfile, type FailoverLogger } from "./failover-client.js";
 import { buildUrl, preprocessMultimodalContent, type VideoUploadConfig } from "./multimodal.js";
+import {
+  buildAnthropicRequest,
+  parseAnthropicResponse,
+  type AnthropicUsage,
+} from "./anthropic.js";
+
+type ApiProtocol = "openai" | "anthropic";
 
 export type ToolEnabledAgentOptions = {
   baseUrl: string;
@@ -32,6 +39,8 @@ export type ToolEnabledAgentOptions = {
   failoverLogger?: FailoverLogger;
   /** 视频文件上传专用配置（当聊天代理不支持 /files 端点时） */
   videoUploadConfig?: VideoUploadConfig;
+  /** 强制指定 API 协议（默认自动检测） */
+  protocol?: ApiProtocol;
 };
 
 type Message =
@@ -145,6 +154,15 @@ export class ToolEnabledAgent implements BelldandyAgent {
       while (true) {
         // 调用模型
         const response = await this.callModel(messages, tools.length > 0 ? tools : undefined);
+
+        // 记录 usage 信息（Anthropic 协议返回缓存命中数据）
+        if (response.ok && response.usage) {
+          const u = response.usage;
+          const parts = [`input=${u.input_tokens}`, `output=${u.output_tokens}`];
+          if (u.cache_creation_input_tokens) parts.push(`cache_create=${u.cache_creation_input_tokens}`);
+          if (u.cache_read_input_tokens) parts.push(`cache_read=${u.cache_read_input_tokens}`);
+          console.log(`[agent] [usage] ${parts.join(" ")}`);
+        }
 
         if (!response.ok) {
           runSuccess = false;
@@ -344,29 +362,41 @@ export class ToolEnabledAgent implements BelldandyAgent {
   private async callModel(
     messages: Message[],
     tools?: { type: "function"; function: { name: string; description: string; parameters: object } }[]
-  ): Promise<{ ok: true; content: string; toolCalls?: OpenAIToolCall[]; reasoning_content?: string } | { ok: false; error: string }> {
+  ): Promise<{ ok: true; content: string; toolCalls?: OpenAIToolCall[]; reasoning_content?: string; usage?: AnthropicUsage } | { ok: false; error: string }> {
     try {
-      const payload: Record<string, unknown> = {
-        model: "__PLACEHOLDER__", // 将由 buildRequest 覆盖
-        messages,
-        max_tokens: 4096,
-        stream: false, // 工具调用模式使用非流式简化解析
-      };
+      // 用于记录实际使用的协议（由 buildRequest 内部决定）
+      let usedProtocol: ApiProtocol = "openai" as ApiProtocol;
 
-      if (tools && tools.length > 0) {
-        payload.tools = tools;
-        payload.tool_choice = "auto";
-      }
-
-      // 使用容灾客户端发送请求
       const { response: res } = await this.failoverClient.fetchWithFailover({
         timeoutMs: this.opts.timeoutMs,
         buildRequest: (profile) => {
-          // 替换占位符为实际 profile 的模型名
-          // 清理 messages 中的 undefined 字段，确保 payload干净
-          // 并针对特定模型（如 Kimi）注入缺失的 reasoning_content
+          // 按 profile 的 baseUrl 动态检测协议（而非全局固定）
+          const profileProtocol = this.opts.protocol ?? detectProtocol(profile.baseUrl);
+          usedProtocol = profileProtocol;
+
+          if (profileProtocol === "anthropic") {
+            return buildAnthropicRequest({
+              profile,
+              messages: messages as any,
+              tools: tools as any,
+              maxTokens: 4096,
+              stream: false,
+              enableCaching: true,
+            });
+          }
+
+          // OpenAI 协议
           const cleanMessages = messages.map(m => cleanupMessage(m, profile.model));
-          const actualPayload = { ...payload, model: profile.model, messages: cleanMessages };
+          const payload: Record<string, unknown> = {
+            model: profile.model,
+            messages: cleanMessages,
+            max_tokens: 4096,
+            stream: false,
+          };
+          if (tools && tools.length > 0) {
+            payload.tools = tools;
+            payload.tool_choice = "auto";
+          }
           return {
             url: buildUrl(profile.baseUrl, "/chat/completions"),
             init: {
@@ -375,7 +405,7 @@ export class ToolEnabledAgent implements BelldandyAgent {
                 "content-type": "application/json",
                 authorization: `Bearer ${profile.apiKey}`,
               },
-              body: JSON.stringify(actualPayload),
+              body: JSON.stringify(payload),
             },
           };
         },
@@ -386,19 +416,30 @@ export class ToolEnabledAgent implements BelldandyAgent {
         return { ok: false, error: `模型调用失败（HTTP ${res.status}）：${text}` };
       }
 
+      // 按实际使用的协议解析响应
+      if (usedProtocol === "anthropic") {
+        const json = (await res.json()) as any;
+        const parsed = parseAnthropicResponse(json);
+        const toolCalls: OpenAIToolCall[] | undefined = parsed.toolCalls && parsed.toolCalls.length > 0
+          ? parsed.toolCalls.map(tc => ({
+              id: tc.id,
+              type: "function" as const,
+              function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+            }))
+          : undefined;
+        return { ok: true, content: parsed.content, toolCalls, usage: parsed.usage };
+      }
+
+      // OpenAI 响应解析
       const json = (await res.json()) as JsonObject;
       const choice = (json.choices as any)?.[0];
-
       if (!choice) {
         return { ok: false, error: "模型返回空响应" };
       }
-
       const message = choice.message;
       const content = typeof message?.content === "string" ? message.content : "";
       const toolCalls = Array.isArray(message?.tool_calls) ? message.tool_calls as OpenAIToolCall[] : undefined;
-      // 兼容 DeepSeek/Kimi 等思考模型
       const reasoning_content = typeof message?.reasoning_content === "string" ? message.reasoning_content : undefined;
-
       return { ok: true, content, toolCalls, reasoning_content };
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") {
@@ -436,6 +477,17 @@ function buildInitialMessages(
   messages.push({ role: "user", content: userContent });
 
   return messages;
+}
+
+/**
+ * 根据 baseUrl 自动检测 API 协议类型
+ */
+function detectProtocol(baseUrl: string): ApiProtocol {
+  const lower = baseUrl.toLowerCase();
+  if (lower.includes("anthropic.com")) {
+    return "anthropic";
+  }
+  return "openai";
 }
 
 // 辅助函数：转换 Message 对象为 OpenAI 格式（去除 undefined 字段）

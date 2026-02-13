@@ -1,3 +1,4 @@
+import { type CompactionOptions } from "./compaction.js";
 /**
  * 对话消息
  */
@@ -25,6 +26,8 @@ export type ConversationStoreOptions = {
     ttlSeconds?: number;
     /** 持久化存储目录 (可选) */
     dataDir?: string;
+    /** 对话压缩配置（可选，设置后启用自动压缩） */
+    compaction?: CompactionOptions;
 };
 /**
  * 会话存储
@@ -35,6 +38,7 @@ export declare class ConversationStore {
     private readonly maxHistory;
     private readonly ttlSeconds;
     private readonly dataDir?;
+    private readonly compactionOpts?;
     constructor(options?: ConversationStoreOptions);
     /**
      * 获取会话
@@ -65,6 +69,17 @@ export declare class ConversationStore {
     getHistory(id: string): Array<{
         role: "user" | "assistant";
         content: string;
+    }>;
+    /**
+     * 获取历史消息，自动应用压缩（如果配置了 compaction）。
+     * 当历史 token 超过阈值时，旧消息会被摘要替换。
+     */
+    getHistoryCompacted(id: string, overrideOpts?: CompactionOptions): Promise<{
+        history: Array<{
+            role: "user" | "assistant";
+            content: string;
+        }>;
+        compacted: boolean;
     }>;
 }
 //# sourceMappingURL=conversation.d.ts.map

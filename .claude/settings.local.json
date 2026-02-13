@@ -21,7 +21,11 @@
       "WebFetch(domain:docs.aicodewith.com)",
       "Bash(powershell -NoProfile -Command \"Get-ChildItem ''C:\\\\Users\\\\admin\\\\.belldandy\\\\'' -Filter ''*.md'' -File | Select-Object Name, @{N=''Size\\(bytes\\)'';E={$_Length}} | Format-Table -AutoSize\")",
       "Bash(powershell:*)",
-      "mcp__filesystem__read_text_file"
+      "mcp__filesystem__read_text_file",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "WebFetch(domain:docs.anthropic.com)",
+      "Bash(npx vitest run:*)"
     ]
   }
 }

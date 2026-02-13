@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { needsCompaction, compactMessages, estimateMessagesTokens, type CompactionOptions } from "./compaction.js";
 
 /**
  * 对话消息
@@ -30,6 +31,8 @@ export type ConversationStoreOptions = {
     ttlSeconds?: number;
     /** 持久化存储目录 (可选) */
     dataDir?: string;
+    /** 对话压缩配置（可选，设置后启用自动压缩） */
+    compaction?: CompactionOptions;
 };
 
 /**
@@ -41,11 +44,13 @@ export class ConversationStore {
     private readonly maxHistory: number;
     private readonly ttlSeconds: number;
     private readonly dataDir?: string;
+    private readonly compactionOpts?: CompactionOptions;
 
     constructor(options: ConversationStoreOptions = {}) {
         this.maxHistory = options.maxHistory ?? 20;
         this.ttlSeconds = options.ttlSeconds ?? 3600;
         this.dataDir = options.dataDir;
+        this.compactionOpts = options.compaction;
 
         if (this.dataDir) {
             fs.mkdirSync(this.dataDir, { recursive: true });
@@ -208,5 +213,24 @@ export class ConversationStore {
               .replace(/\n{3,}/g, "\n\n")
               .trim() || m.content
         }));
+    }
+
+    /**
+     * 获取历史消息，自动应用压缩（如果配置了 compaction）。
+     * 当历史 token 超过阈值时，旧消息会被摘要替换。
+     */
+    async getHistoryCompacted(
+        id: string,
+        overrideOpts?: CompactionOptions,
+    ): Promise<{ history: Array<{ role: "user" | "assistant"; content: string }>; compacted: boolean }> {
+        const history = this.getHistory(id);
+        const opts = overrideOpts ?? this.compactionOpts;
+
+        if (!opts || !needsCompaction(history, opts)) {
+            return { history, compacted: false };
+        }
+
+        const result = await compactMessages(history, opts);
+        return { history: result.messages, compacted: result.compacted };
     }
 }

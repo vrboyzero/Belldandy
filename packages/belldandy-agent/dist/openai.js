@@ -106,7 +106,7 @@ export class OpenAIChatAgent {
     }
     buildRequest(profile, messages) {
         if (this.protocol === "anthropic") {
-            // Anthropic 协议：提取 system 消息
+            // Anthropic 协议：提取 system 消息，使用数组格式支持 prompt caching
             const systemMessage = messages.find(m => m.role === "system")?.content;
             const chatMessages = messages.filter(m => m.role !== "system");
             const payload = {
@@ -115,8 +115,15 @@ export class OpenAIChatAgent {
                 max_tokens: 4096,
                 stream: this.opts.stream,
             };
+            // System prompt 使用数组格式 + cache_control 启用 prompt caching
             if (systemMessage) {
-                payload.system = systemMessage;
+                payload.system = [
+                    {
+                        type: "text",
+                        text: typeof systemMessage === "string" ? systemMessage : JSON.stringify(systemMessage),
+                        cache_control: { type: "ephemeral" },
+                    },
+                ];
             }
             // 标准 Anthropic API headers
             // 注意：某些服务（如 Kimi Code）可能有额外的客户端校验
