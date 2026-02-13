@@ -33,6 +33,8 @@ export type ToolEnabledAgentOptions = {
     videoUploadConfig?: VideoUploadConfig;
     /** 强制指定 API 协议（默认自动检测） */
     protocol?: ApiProtocol;
+    /** 最大输入 token 数限制（超过时自动裁剪历史消息，0 或不设表示不限制） */
+    maxInputTokens?: number;
 };
 export declare class ToolEnabledAgent implements BelldandyAgent {
     private readonly opts;

@@ -256,8 +256,14 @@ const maxSystemPromptChars = maxSystemPromptCharsRaw ? parseInt(maxSystemPromptC
 
 
 const toolsEnabled = (readEnv("BELLDANDY_TOOLS_ENABLED") ?? "false") === "true";
+const toolGroups = new Set(
+  (readEnv("BELLDANDY_TOOL_GROUPS") ?? "all").split(",").map(s => s.trim().toLowerCase()),
+);
+const hasToolGroup = (group: string) => toolGroups.has("all") || toolGroups.has(group);
 const agentTimeoutMsRaw = readEnv("BELLDANDY_AGENT_TIMEOUT_MS");
 const agentTimeoutMs = agentTimeoutMsRaw ? Math.max(5000, parseInt(agentTimeoutMsRaw, 10) || 120_000) : undefined;
+const maxInputTokensRaw = readEnv("BELLDANDY_MAX_INPUT_TOKENS");
+const maxInputTokens = maxInputTokensRaw ? parseInt(maxInputTokensRaw, 10) || 0 : 0;
 
 // Video File Upload (dedicated endpoint when chat proxy doesn't support /files)
 const videoFileApiUrl = readEnv("BELLDANDY_VIDEO_FILE_API_URL");
@@ -375,40 +381,50 @@ let serverBroadcast: ((msg: unknown) => void) | undefined;
 // 3. Init Executor (conditional)
 const toolsToRegister = toolsEnabled
   ? [
+    // ── core 组：文件、网络、记忆（始终加载） ──
     fetchTool,
     applyPatchTool,
     fileReadTool,
     fileWriteTool,
     fileDeleteTool,
     listFilesTool,
-    // [SECURITY] runCommandTool 仅在显式启用时注册
     ...(dangerousToolsEnabled ? [runCommandTool] : []),
-
     createMemorySearchTool(),
-
-
     createMemoryGetTool(),
-    browserOpenTool,
-    browserNavigateTool,
-    browserClickTool,
-    browserTypeTool,
-    browserScreenshotTool,
-    browserGetContentTool,
-    cameraSnapTool,
-    imageGenerateTool,
-    textToSpeechTool,
-    methodListTool,
-    methodReadTool,
-    methodCreateTool,
-    methodSearchTool,
-    logReadTool,
-    logSearchTool,
-    // Cron 定时任务管理工具（始终注册，调度器可独立启停）
-    createCronTool({ store: cronStore, scheduler: { status: () => cronSchedulerHandle?.status() ?? { running: false, activeRuns: 0 } } }),
-    // 服务重启工具（供 Agent 调用，通过 exit(100) 触发 launcher 重启）
-    createServiceRestartTool((msg) => serverBroadcast?.(msg)),
-    // FACET 模组切换工具
-    switchFacetTool,
+
+    // ── browser 组 ──
+    ...(hasToolGroup("browser") ? [
+      browserOpenTool,
+      browserNavigateTool,
+      browserClickTool,
+      browserTypeTool,
+      browserScreenshotTool,
+      browserGetContentTool,
+    ] : []),
+
+    // ── multimedia 组 ──
+    ...(hasToolGroup("multimedia") ? [
+      cameraSnapTool,
+      imageGenerateTool,
+      textToSpeechTool,
+    ] : []),
+
+    // ── methodology 组 ──
+    ...(hasToolGroup("methodology") ? [
+      methodListTool,
+      methodReadTool,
+      methodCreateTool,
+      methodSearchTool,
+    ] : []),
+
+    // ── system 组 ──
+    ...(hasToolGroup("system") ? [
+      logReadTool,
+      logSearchTool,
+      createCronTool({ store: cronStore, scheduler: { status: () => cronSchedulerHandle?.status() ?? { running: false, activeRuns: 0 } } }),
+      createServiceRestartTool((msg) => serverBroadcast?.(msg)),
+      switchFacetTool,
+    ] : []),
   ]
   : [];
 
@@ -536,6 +552,7 @@ Keep responses concise and natural for spoken delivery.`;
         failoverLogger: logger,
         videoUploadConfig,
         protocol: agentProtocol,
+        ...(maxInputTokens > 0 && { maxInputTokens }),
       });
     }
     return new OpenAIChatAgent({

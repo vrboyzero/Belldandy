@@ -6,6 +6,7 @@
 import { FailoverClient } from "./failover-client.js";
 import { buildUrl, preprocessMultimodalContent } from "./multimodal.js";
 import { buildAnthropicRequest, parseAnthropicResponse, } from "./anthropic.js";
+import { estimateTokens } from "./compaction.js";
 export class ToolEnabledAgent {
     opts;
     failoverClient;
@@ -285,6 +286,11 @@ export class ToolEnabledAgent {
     }
     async callModel(messages, tools) {
         try {
+            // 输入 token 预检：超限时裁剪历史消息
+            const maxInput = this.opts.maxInputTokens;
+            if (maxInput && maxInput > 0) {
+                trimMessagesToFit(messages, tools, maxInput);
+            }
             // 用于记录实际使用的协议（由 buildRequest 内部决定）
             let usedProtocol = "openai";
             const { response: res } = await this.failoverClient.fetchWithFailover({
@@ -453,5 +459,46 @@ function stripToolCallsSection(text) {
         .replace(/<\|tool_call_begin\|>[\s\S]*?<\|tool_call_end\|>/g, "")
         .replace(/\n{3,}/g, "\n\n")
         .trim();
+}
+/**
+ * 输入 token 预检：估算 messages + tools 的总 token 数，
+ * 超限时从历史消息（非 system、非最后一条 user）开始裁剪。
+ * 直接修改 messages 数组（in-place）。
+ */
+function trimMessagesToFit(messages, tools, maxTokens) {
+    const SAFETY_MARGIN = 1.2;
+    // 估算工具定义的 token 数（只算一次）
+    let toolsTokens = 0;
+    if (tools) {
+        for (const t of tools) {
+            toolsTokens += estimateTokens(t.function.name + t.function.description + JSON.stringify(t.function.parameters));
+        }
+    }
+    // 估算总 token
+    const estimateTotal = () => {
+        let total = toolsTokens;
+        for (const m of messages) {
+            const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+            total += estimateTokens(content ?? "") + 4; // +4 for role/formatting
+            if (m.role === "assistant" && m.tool_calls) {
+                total += estimateTokens(JSON.stringify(m.tool_calls));
+            }
+        }
+        return Math.ceil(total * SAFETY_MARGIN);
+    };
+    let total = estimateTotal();
+    if (total <= maxTokens)
+        return;
+    // 找到可裁剪的历史消息索引（跳过 system 和最后一条 user）
+    // messages 结构：[system?, ...history(user/assistant), current_user]
+    // 从 index 1 开始裁剪（保留 system），保留最后一条（current user）
+    while (total > maxTokens && messages.length > 2) {
+        // 找第一条非 system 消息（但不是最后一条）
+        const idx = messages.findIndex((m, i) => m.role !== "system" && i < messages.length - 1);
+        if (idx === -1)
+            break;
+        messages.splice(idx, 1);
+        total = estimateTotal();
+    }
 }
 //# sourceMappingURL=tool-agent.js.map
