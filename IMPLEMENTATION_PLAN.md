@@ -59,6 +59,7 @@ flowchart TB
 - **Phase 20**：WebChat UI 增强 ✅ 已完成
 - **Phase 21**：服务重启工具（Service Restart Tool）✅ 已完成
 - **Phase 22**：FACET 模组切换工具（switch_facet）✅ 已完成
+- **Phase 23**：上下文自动压缩（Context Compaction）✅ 已完成
 - **Windows 兼容性增强**：对应 Roadmap Phase 15 的平台兼容任务，详见后文
 
 ## 3. 里程碑与阶段划分
@@ -1516,4 +1517,94 @@ packages/belldandy-agent/src/templates/
 - [x] 传入有效 facet_name 时，SOUL.md 锚点行之前内容不变，之后替换为目标模组内容
 - [x] 传入不存在的 facet_name 时，返回错误并列出可用模组
 - [x] 传入含路径穿越字符的 facet_name 时，返回错误
+
+---
+
+### Phase 23：上下文自动压缩 (Context Compaction) ✅ 已完成
+
+**状态**：✅ 已完成 (2026-02-13)
+
+**目标**：解决长时间对话和自动化任务中上下文窗口溢出问题，实现语义级压缩而非机械截断。
+
+#### 23.1 问题背景
+
+原有系统存在三层上下文控制，但均为无语义的机械操作：
+- `maxHistory`（50 条）：硬截断旧消息，丢失语义
+- `compaction.ts`：token 阈值触发，但仅做文本截断（每条取前 200 字符），`summarizer` 参数从未被注入
+- `trimMessagesToFit`：发送前暴力裁剪，直接删消息
+
+长时间自动化任务（心跳、Cron、复杂工具链）会导致上下文快速膨胀，触发暴力裁剪后丢失关键决策和操作结果。
+
+#### 23.2 方案设计
+
+三层渐进式压缩架构：
+
+```
+┌─────────────────────────────────────────────┐
+│  Tier 0: System Prompt（固定，不压缩）       │
+├─────────────────────────────────────────────┤
+│  Tier 1: Archival Summary（归档摘要）        │
+├─────────────────────────────────────────────┤
+│  Tier 2: Rolling Summary（滚动摘要）         │
+├─────────────────────────────────────────────┤
+│  Tier 3: Working Memory（最近 N 条完整消息） │
+└─────────────────────────────────────────────┘
+```
+
+- **Working Memory**：保留最近 N 条消息完整内容（默认 10）
+- **Rolling Summary**：溢出消息由模型增量合入摘要，不从头重新生成
+- **Archival Summary**：Rolling Summary 超过阈值时进一步浓缩为超简洁版本
+
+双触发点：
+1. **请求前**：`getHistoryCompacted()` 基于 token 阈值判断
+2. **ReAct 循环内**：每次 `callModel` 前检查上下文使用比例（默认 75%）
+
+#### 23.3 改动文件
+
+```
+packages/belldandy-agent/src/
+├── compaction.ts          # [REWRITE] 三层状态、增量压缩、工具结果预压缩、摘要 Prompt、兼容旧 API
+├── conversation.ts        # [MODIFIED] CompactionState 持久化、增量 getHistoryCompacted()、hook 回调
+├── tool-agent.ts          # [MODIFIED] ReAct 循环内压缩检查点、compactInLoop 方法
+├── hooks.ts               # [MODIFIED] BeforeCompactionEvent/AfterCompactionEvent 增加 tier/source 字段
+└── index.ts               # [MODIFIED] 导出新增类型
+
+packages/belldandy-core/src/bin/
+└── gateway.ts             # [MODIFIED] 注入 summarizer 函数、新增环境变量
+
+.env                       # [MODIFIED] 新增压缩相关配置项
+.env.example               # [MODIFIED] 新增压缩相关配置项
+```
+
+#### 23.4 新增环境变量
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `BELLDANDY_COMPACTION_ENABLED` | `true` | 总开关 |
+| `BELLDANDY_COMPACTION_THRESHOLD` | `12000` | 触发压缩的 token 阈值 |
+| `BELLDANDY_COMPACTION_KEEP_RECENT` | `10` | 保留最近消息条数（原默认 6，调整为 10） |
+| `BELLDANDY_COMPACTION_TRIGGER_FRACTION` | `0.75` | ReAct 循环内触发比例 |
+| `BELLDANDY_COMPACTION_ARCHIVAL_THRESHOLD` | `2000` | Rolling Summary 归档阈值 |
+| `BELLDANDY_COMPACTION_MODEL` | （空） | 摘要专用模型，不设则复用主模型 |
+| `BELLDANDY_COMPACTION_BASE_URL` | （空） | 摘要专用 API 地址，不设则复用主模型 |
+| `BELLDANDY_COMPACTION_API_KEY` | （空） | 摘要专用 API 密钥，不设则复用主模型 |
+
+#### 23.5 降级策略
+
+1. 模型摘要可用 → 高质量语义摘要
+2. 模型不可用/超时 → 文本截断摘要（`buildFallbackSummary`）
+3. 压缩本身失败 → `trimMessagesToFit` 暴力裁剪（最后防线）
+
+#### 23.6 验收用例
+
+- [x] 编译通过 (`pnpm build`)
+- [x] `compactIncremental` 在 token 超过阈值时正确分割消息并生成摘要
+- [x] `CompactionState` 持久化到 `.compaction.json` 并可恢复
+- [x] ReAct 循环内压缩检查点在上下文使用比例超过阈值时触发
+- [x] Summarizer 支持独立配置 BASE_URL / API_KEY / MODEL
+- [x] 模型不可用时降级为文本截断摘要
+- [x] `before_compaction` / `after_compaction` 钩子正确触发并携带 tier/source 信息
+- [x] 环境变量已更新到 `.env`、`.env.example`
+- [x] 使用手册已更新（3.5 对话压缩章节）
+- [x] 实现内容说明已更新（第 16 节）
 

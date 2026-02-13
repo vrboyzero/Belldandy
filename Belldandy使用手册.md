@@ -205,7 +205,94 @@ BELLDANDY_MODEL_CONFIG_FILE=E:\\config\\my-models.json
 
 > **💡 提示**：不创建 `models.json` 时，Belldandy 的行为与之前完全一致（仅使用 `.env` 中的单一配置），完全向后兼容。
 
-### 3.5 可视化配置 (Settings UI)
+### 3.5 对话压缩 (Context Compaction)
+
+当你与 Belldandy 进行长时间对话或让它执行复杂的自动化任务时，对话历史会不断增长，最终可能超出模型的上下文窗口限制。**对话压缩**功能会自动将旧消息摘要化，在保留关键信息的同时大幅减少 token 消耗。
+
+#### 工作原理
+
+Belldandy 采用**三层渐进式压缩**架构：
+
+```
+┌─────────────────────────────────────────────┐
+│  Tier 0: System Prompt（固定，不压缩）       │
+├─────────────────────────────────────────────┤
+│  Tier 1: Archival Summary（归档摘要）        │
+│  ← 当 Rolling Summary 过大时进一步浓缩      │
+├─────────────────────────────────────────────┤
+│  Tier 2: Rolling Summary（滚动摘要）         │
+│  ← 旧消息增量合入此摘要                     │
+├─────────────────────────────────────────────┤
+│  Tier 3: Working Memory（最近 N 条完整消息） │
+│  ← 当前正在处理的"热"上下文                 │
+└─────────────────────────────────────────────┘
+```
+
+- **Working Memory**：保留最近 N 条消息的完整内容（默认 10 条）。
+- **Rolling Summary**：当 Working Memory 溢出时，溢出的消息不会丢弃，而是由模型生成增量摘要合入此层。每次只处理新溢出的消息，不会从头重新生成。
+- **Archival Summary**：当 Rolling Summary 本身过大时（默认超过 2000 token），会被进一步压缩为超浓缩版本，只保留最终结论、用户偏好和关键决策。
+
+**压缩在两个时机触发**：
+1. **请求前**：每次你发送消息时，Gateway 检查历史 token 是否超过阈值。
+2. **ReAct 循环内**：Agent 执行工具调用链时，每次调用模型前检查上下文使用比例，防止长工具链撑爆上下文。
+
+**降级策略**：如果模型摘要调用失败（超时、服务不可用等），会自动降级为文本截断摘要（每条消息取前 200 字符），确保不会因为压缩失败而阻塞对话。
+
+#### 环境变量
+
+在 `.env.local` 或 `.env` 中配置：
+
+```env
+# ------ 对话压缩（Compaction） ------
+
+# 是否启用上下文自动压缩（默认 true）
+# BELLDANDY_COMPACTION_ENABLED=true
+
+# 触发压缩的 token 阈值（默认 12000）
+# 当历史消息的估算 token 数超过此值时触发压缩
+# 建议 Anthropic 模型设 8000，OpenAI 模型设 20000
+BELLDANDY_COMPACTION_THRESHOLD=20000
+
+# 压缩时保留最近几条消息原文（默认 10）
+# 这些消息不会被摘要化，保持完整内容
+BELLDANDY_COMPACTION_KEEP_RECENT=10
+
+# ReAct 循环内压缩触发比例（默认 0.75）
+# 当上下文使用量达到 MAX_INPUT_TOKENS 的 75% 时触发循环内压缩
+# 需配合 BELLDANDY_MAX_INPUT_TOKENS 使用
+# BELLDANDY_COMPACTION_TRIGGER_FRACTION=0.75
+
+# Rolling Summary 归档阈值（默认 2000 token）
+# 当滚动摘要超过此值时，触发归档压缩（进一步浓缩）
+# BELLDANDY_COMPACTION_ARCHIVAL_THRESHOLD=2000
+
+# 摘要专用模型（可选，不设则复用主模型）
+# 建议使用便宜/快速的模型以降低成本
+# BELLDANDY_COMPACTION_MODEL=gpt-4o-mini
+
+# 摘要专用 API 地址（可选，不设则复用主模型的 BASE_URL）
+# 当摘要模型与主模型不在同一服务商时需要配置
+# BELLDANDY_COMPACTION_BASE_URL=https://api.openai.com/v1
+
+# 摘要专用 API 密钥（可选，不设则复用主模型的 API_KEY）
+# BELLDANDY_COMPACTION_API_KEY=sk-xxx
+```
+
+#### 配置建议
+
+| 场景 | 推荐配置 |
+|------|----------|
+| 日常对话 | 默认配置即可，无需修改 |
+| 长时间自动化任务 | `THRESHOLD=20000`，`KEEP_RECENT=10`，配置专用摘要模型 |
+| 使用中转代理（输入受限） | `THRESHOLD=8000`，`KEEP_RECENT=6`，`MAX_INPUT_TOKENS=20000` |
+| 主模型是 Anthropic，想用 OpenAI 做摘要 | 设置 `COMPACTION_MODEL`、`COMPACTION_BASE_URL`、`COMPACTION_API_KEY` 三项 |
+| 不想使用压缩 | `BELLDANDY_COMPACTION_ENABLED=false` |
+
+#### 压缩状态持久化
+
+每个会话的压缩状态（滚动摘要、归档摘要等）会自动保存到 `~/.belldandy/sessions/{会话ID}.compaction.json`。这意味着即使 Belldandy 重启，之前的摘要也不会丢失。
+
+### 3.6 可视化配置 (Settings UI)
 
 如果你觉得编辑文本文件太麻烦，Belldandy 提供了全新的 Web 配置面板：
 
@@ -217,17 +304,17 @@ BELLDANDY_MODEL_CONFIG_FILE=E:\\config\\my-models.json
     *   修改 **心跳间隔**。
 4.  点击 **Save**，系统会自动保存配置到 `.env.local` 并重启服务。
 
-### 3.6 视觉与视频理解 (New!)
+### 3.7 视觉与视频理解 (New!)
 
 Belldandy 现在支持**图片**和**视频**的理解能力（需配置支持视觉的模型，如 Kimi k2.5）。
 
-#### 3.6.1 发送图片
+#### 3.7.1 发送图片
 1. 点击聊天输入框左侧的 `+` 号（或附件按钮）。
 2. 选择本地图片文件（jpg, png, webp 等）。
 3. 在输入框中输入你的问题（例如：“这张图里有什么？”）。
 4. 发送消息，模型将能够“看到”图片并回答。
 
-#### 3.6.2 发送视频 (Kimi K2.5 专属)
+#### 3.7.2 发送视频 (Kimi K2.5 专属)
 1. 同样点击附件按钮。
 2. 选择本地视频文件（mp4, mov, avi 等，建议 < 100MB）。
 3. 输入问题（例如："这个视频讲了什么故事？"）。
@@ -236,7 +323,7 @@ Belldandy 现在支持**图片**和**视频**的理解能力（需配置支持�
    - **原理**：Agent 会自动将视频上传到 Moonshot AI 的云端文件服务，获取文件 ID 后通过 `ms://` 协议引用，模型直接读取云端文件进行分析。
    - **工具模式也支持**：无论是普通对话模式还是启用了工具调用（`BELLDANDY_TOOLS_ENABLED=true`）的模式，视频理解都能正常工作。
 
-#### 3.6.3 视频上传独立配置（高级）
+#### 3.7.3 视频上传独立配置（高级）
 
 如果你的 AI 服务使用了代理/网关（如 API 中转站），而该代理不支持 Moonshot 的 `/files` 文件上传端点，你可以在 `models.json` 中为视频上传配置独立的直连地址：
 
@@ -252,7 +339,7 @@ Belldandy 现在支持**图片**和**视频**的理解能力（需配置支持�
 
 这样，聊天请求走代理，视频上传直连 Moonshot，互不影响。
 
-#### 3.6.4 配置要求
+#### 3.7.4 配置要求
 使用视觉能力前，请确保 `.env` 中配置了支持视觉的模型：
 ```bash
 # 推荐配置 (Kimi K2.5)

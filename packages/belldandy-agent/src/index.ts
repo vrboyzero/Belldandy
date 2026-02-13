@@ -183,9 +183,14 @@ export {
 // 对话压缩
 export {
   compactMessages,
+  compactIncremental,
   needsCompaction,
+  needsInLoopCompaction,
   estimateTokens,
   estimateMessagesTokens,
+  createEmptyCompactionState,
   type CompactionOptions,
   type CompactionResult,
+  type CompactionState,
+  type SummarizerFn,
 } from "./compaction.js";

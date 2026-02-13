@@ -41,5 +41,5 @@ export { buildUrl, uploadFileToMoonshot, preprocessMultimodalContent } from "./m
 // Anthropic 原生协议支持（prompt caching、消息/工具转换）
 export { convertMessagesToAnthropic, convertToolsToAnthropic, buildAnthropicRequest, parseAnthropicResponse, } from "./anthropic.js";
 // 对话压缩
-export { compactMessages, needsCompaction, estimateTokens, estimateMessagesTokens, } from "./compaction.js";
+export { compactMessages, compactIncremental, needsCompaction, needsInLoopCompaction, estimateTokens, estimateMessagesTokens, createEmptyCompactionState, } from "./compaction.js";
 //# sourceMappingURL=index.js.map

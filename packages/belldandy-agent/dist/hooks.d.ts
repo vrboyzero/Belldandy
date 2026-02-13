@@ -121,6 +121,10 @@ export interface BeforeCompactionEvent {
     messageCount: number;
     /** 当前 token 数量（如有） */
     tokenCount?: number;
+    /** 压缩层级：rolling（滚动摘要）或 archival（归档压缩） */
+    tier?: "rolling" | "archival";
+    /** 触发来源：request（请求前）或 loop（ReAct 循环内） */
+    source?: "request" | "loop";
 }
 /**
  * after_compaction 钩子事件
@@ -134,6 +138,12 @@ export interface AfterCompactionEvent {
     tokenCount?: number;
     /** 被压缩的消息数量 */
     compactedCount: number;
+    /** 压缩层级 */
+    tier?: "rolling" | "archival";
+    /** 触发来源 */
+    source?: "request" | "loop";
+    /** 压缩前 token 数量 */
+    originalTokenCount?: number;
 }
 /**
  * message_received 钩子事件

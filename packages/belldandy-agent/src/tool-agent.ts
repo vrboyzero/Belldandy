@@ -16,7 +16,7 @@ import {
   parseAnthropicResponse,
   type AnthropicUsage,
 } from "./anthropic.js";
-import { estimateTokens } from "./compaction.js";
+import { estimateTokens, needsInLoopCompaction, compactIncremental, createEmptyCompactionState, type CompactionState, type CompactionOptions, type SummarizerFn } from "./compaction.js";
 
 type ApiProtocol = "openai" | "anthropic";
 
@@ -44,6 +44,10 @@ export type ToolEnabledAgentOptions = {
   protocol?: ApiProtocol;
   /** 最大输入 token 数限制（超过时自动裁剪历史消息，0 或不设表示不限制） */
   maxInputTokens?: number;
+  /** ReAct 循环内压缩配置（可选） */
+  compaction?: CompactionOptions;
+  /** 模型摘要函数（用于循环内压缩） */
+  summarizer?: SummarizerFn;
 };
 
 type Message =
@@ -147,6 +151,9 @@ export class ToolEnabledAgent implements BelldandyAgent {
     let runSuccess = true;
     let runError: string | undefined;
 
+    // ReAct 循环内压缩状态
+    let loopCompactionState: CompactionState = createEmptyCompactionState();
+
     // Usage 累加器
     let totalInputTokens = 0;
     let totalOutputTokens = 0;
@@ -176,6 +183,21 @@ export class ToolEnabledAgent implements BelldandyAgent {
 
     try {
       while (true) {
+        // ReAct 循环内压缩检查：当上下文接近上限时，压缩历史消息
+        const maxInput = this.opts.maxInputTokens;
+        if (maxInput && maxInput > 0 && this.opts.compaction?.enabled !== false) {
+          const triggerFraction = this.opts.compaction?.triggerFraction ?? 0.75;
+          const currentTokens = estimateMessagesTotal(messages);
+          if (needsInLoopCompaction(currentTokens, maxInput, triggerFraction)) {
+            try {
+              loopCompactionState = await this.compactInLoop(messages, loopCompactionState);
+            } catch (err) {
+              console.error(`[agent] [compaction] in-loop compaction failed: ${err}`);
+              // 压缩失败不阻塞，继续执行（trimMessagesToFit 会兜底）
+            }
+          }
+        }
+
         // 调用模型
         const response = await this.callModel(messages, tools.length > 0 ? tools : undefined);
 
@@ -496,6 +518,99 @@ export class ToolEnabledAgent implements BelldandyAgent {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   }
+
+  /**
+   * ReAct 循环内压缩：将 messages 数组中的旧历史消息压缩为摘要。
+   * 直接修改 messages 数组（in-place），返回更新后的 CompactionState。
+   */
+  private async compactInLoop(messages: Message[], state: CompactionState): Promise<CompactionState> {
+    // 提取可压缩的 user/assistant 消息（跳过 system 和 tool 消息）
+    const systemMsg = messages[0]?.role === "system" ? messages[0] : null;
+    const systemIdx = systemMsg ? 1 : 0;
+
+    // 找到最后一条 user 消息的位置（当前轮次的输入）
+    let lastUserIdx = messages.length - 1;
+    while (lastUserIdx > systemIdx && messages[lastUserIdx].role !== "user") {
+      lastUserIdx--;
+    }
+
+    // 收集可压缩的历史消息（system 之后、最近几轮之前的 user/assistant 对）
+    const keepRecent = this.opts.compaction?.keepRecentCount ?? 10;
+    const historyMessages: Array<{ role: "user" | "assistant"; content: string }> = [];
+    const historyIndices: number[] = [];
+
+    for (let i = systemIdx; i < messages.length; i++) {
+      const m = messages[i];
+      if (m.role === "user" || m.role === "assistant") {
+        historyMessages.push({ role: m.role, content: typeof m.content === "string" ? m.content || "" : JSON.stringify(m.content) });
+        historyIndices.push(i);
+      }
+    }
+
+    // 如果历史消息不够多，不压缩
+    if (historyMessages.length <= keepRecent) return state;
+
+    const result = await compactIncremental(historyMessages, state, {
+      ...this.opts.compaction,
+      summarizer: this.opts.summarizer,
+    });
+
+    if (!result.compacted) return state;
+
+    // 替换 messages 数组：保留 system + 压缩后的消息 + tool 消息
+    // 压缩后的消息已经包含摘要 + 最近消息
+    const newMessages: Message[] = [];
+    if (systemMsg) newMessages.push(systemMsg);
+
+    // 添加压缩后的 user/assistant 消息
+    for (const m of result.messages) {
+      newMessages.push({ role: m.role, content: m.content });
+    }
+
+    // 保留原始 messages 中的 tool 相关消息（在最近保留范围内的）
+    const keptContentSet = new Set(result.messages.map(m => m.content));
+    for (let i = systemIdx; i < messages.length; i++) {
+      const m = messages[i];
+      if (m.role === "tool") {
+        // 只保留与最近消息关联的 tool 消息
+        // 简单策略：保留最后 keepRecent*2 条消息范围内的 tool 消息
+        if (i >= messages.length - keepRecent * 3) {
+          newMessages.push(m);
+        }
+      } else if (m.role === "assistant" && (m as any).tool_calls) {
+        // 保留带 tool_calls 的 assistant 消息（如果在最近范围内）
+        if (i >= messages.length - keepRecent * 3) {
+          // 检查是否已经被压缩后的消息覆盖
+          const content = typeof m.content === "string" ? m.content : "";
+          if (!keptContentSet.has(content)) {
+            newMessages.push(m);
+          }
+        }
+      }
+    }
+
+    // in-place 替换
+    messages.length = 0;
+    messages.push(...newMessages);
+
+    console.log(`[agent] [compaction] in-loop compaction: ${result.originalTokens} → ${result.compactedTokens} tokens (tier: ${result.tier})`);
+
+    return result.state;
+  }
+}
+
+/** 估算 messages 数组的总 token 数（用于循环内压缩判断） */
+function estimateMessagesTotal(messages: Message[]): number {
+  const MARGIN = 1.2;
+  let total = 0;
+  for (const m of messages) {
+    const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+    total += estimateTokens(content ?? "") + 4;
+    if (m.role === "assistant" && (m as any).tool_calls) {
+      total += estimateTokens(JSON.stringify((m as any).tool_calls));
+    }
+  }
+  return Math.ceil(total * MARGIN);
 }
 
 function buildInitialMessages(

@@ -69,12 +69,13 @@
 
 - **目标**：在保持对话连续性的同时，严格防御 Prompt Injection 攻击，确保 Agent 人格不被覆盖。
 - **实现内容**：
-    - **ConversationStore**：内存中的会话管理器，处理会话 TTL（自动过期）与最大历史长度限制。
+    - **ConversationStore**：会话管理器，支持内存缓存 + JSONL 文件持久化，处理会话 TTL（自动过期）与最大历史长度限制。
     - **分层 Prompt 架构**：严格隔离数据层级：
         1. **System Layer**：系统指令与人格设定（最高优先级，用户不可见）。
-        2. **History Layer**：过往对话历史。
+        2. **History Layer**：过往对话历史（支持自动压缩，详见第 16 节）。
         3. **User Layer**：当前用户输入（被视为普通内容而非指令）。
-- **价值**：增强了系统的健壮性与安全性，避免用户通过恶意指令（如“忽略前面所有指令”）篡改 Agent 的核心行为准则。
+    - **上下文自动压缩**：三层渐进式压缩（Archival Summary → Rolling Summary → Working Memory），支持模型摘要与降级兜底，详见第 16 节。
+- **价值**：增强了系统的健壮性与安全性，避免用户通过恶意指令（如"忽略前面所有指令"）篡改 Agent 的核心行为准则。
 
 ### 6. SOUL 人格系统 (Phase 5)
 
@@ -345,6 +346,65 @@
     - **Context Injection**：每次对话开始时，自动从 sessions 中提取最近对话摘要，注入 System Prompt。
     - **Auto-Recall**：使用 NLP 检测用户输入中的"回忆类"关键词，自动触发 `memory_search` 并将结果注入上下文。
 - **价值**：让 Agent 像人类一样自然地回忆，而非机械地等待用户显式请求。
+
+### 16. 上下文自动压缩 (Context Compaction) Phase 2.3
+
+- **目标**：解决长时间对话和自动化任务中上下文窗口溢出的问题，让 Agent 能够持续运行而不丢失关键信息。
+- **状态**：✅ 已完成 (2026-02-13)
+- **背景**：
+    - 原有系统存在三层上下文控制（`maxHistory` 硬截断、`compaction.ts` 文本截断、`trimMessagesToFit` 暴力裁剪），但均为无语义的机械截断，且 `summarizer` 参数从未被注入，不调用模型。
+    - 长时间自动化任务（心跳、Cron、复杂工具链）会导致上下文快速膨胀，触发暴力裁剪后丢失关键决策和操作结果。
+- **实现内容**：
+    - **三层渐进式压缩架构**：
+        - **Tier 3 — Working Memory**：保留最近 N 条消息的完整内容（默认 10 条），作为当前"热"上下文。
+        - **Tier 2 — Rolling Summary**：当 Working Memory 溢出时，溢出的消息由模型生成增量摘要合入此层。每次只处理新溢出的消息，不从头重新生成。
+        - **Tier 1 — Archival Summary**：当 Rolling Summary 超过阈值（默认 2000 token）时，进一步压缩为超浓缩版本，只保留最终结论、用户偏好和关键决策。
+    - **增量压缩**（`compactIncremental`）：
+        - 接收 `CompactionState` 状态对象，只处理新溢出的消息，避免每次从头生成摘要。
+        - 摘要 Prompt 区分"首次生成"和"增量更新"两种模式。
+    - **工具结果预压缩**：
+        - 工具调用结果（网页内容、文件内容、命令输出）在合入摘要前先做结构化截取（保留前 400 + 末尾 100 字符），避免冗长输出撑爆摘要。
+    - **双触发点**：
+        1. **请求前触发**：`server.ts` 调用 `getHistoryCompacted()` 时，基于 token 阈值判断。
+        2. **ReAct 循环内触发**：`tool-agent.ts` 每次调用模型前，检查上下文使用比例（默认 75%），超过时执行循环内压缩，防止长工具链撑爆上下文。
+    - **Summarizer 注入**：
+        - `gateway.ts` 基于 `FailoverClient` 创建 summarizer 函数，注入到 `ConversationStore` 和 `ToolEnabledAgent`。
+        - 支持独立配置摘要专用模型、API 地址和密钥（`BELLDANDY_COMPACTION_MODEL` / `BELLDANDY_COMPACTION_BASE_URL` / `BELLDANDY_COMPACTION_API_KEY`），可使用便宜模型降低成本。
+        - 不配置时复用主模型。
+    - **CompactionState 持久化**：
+        - 每个会话的压缩状态（滚动摘要、归档摘要、已压缩消息数、时间戳）保存到 `~/.belldandy/sessions/{会话ID}.compaction.json`。
+        - 重启后自动加载，摘要不丢失。
+    - **Hook 系统接入**：
+        - `before_compaction` / `after_compaction` 钩子已接入实际压缩流程，事件增加 `tier`（rolling/archival）和 `source`（request/loop）字段。
+    - **降级策略**：
+        1. 模型摘要可用 → 使用模型生成高质量摘要。
+        2. 模型不可用/超时 → 降级为文本截断摘要（`buildFallbackSummary`，每条取前 200 字符）。
+        3. 压缩本身失败 → 回退到 `trimMessagesToFit` 暴力裁剪（最后防线不变）。
+- **改动文件**：
+    | 文件 | 改动 |
+    |------|------|
+    | `packages/belldandy-agent/src/compaction.ts` | 核心重构：三层状态、增量压缩、工具结果预压缩、摘要 Prompt、兼容旧 API |
+    | `packages/belldandy-agent/src/conversation.ts` | `CompactionState` 持久化读写、增量 `getHistoryCompacted()`、hook 回调 |
+    | `packages/belldandy-agent/src/tool-agent.ts` | ReAct 循环内压缩检查点、`compactInLoop` 方法 |
+    | `packages/belldandy-core/src/bin/gateway.ts` | 注入 summarizer 函数、新增 6 个环境变量 |
+    | `packages/belldandy-agent/src/hooks.ts` | `BeforeCompactionEvent` / `AfterCompactionEvent` 增加 `tier`、`source` 字段 |
+    | `packages/belldandy-agent/src/index.ts` | 导出新增类型 |
+- **环境变量**：
+    | 变量 | 默认值 | 说明 |
+    |------|--------|------|
+    | `BELLDANDY_COMPACTION_ENABLED` | `true` | 总开关 |
+    | `BELLDANDY_COMPACTION_THRESHOLD` | `12000` | 触发压缩的 token 阈值 |
+    | `BELLDANDY_COMPACTION_KEEP_RECENT` | `10` | 保留最近消息条数 |
+    | `BELLDANDY_COMPACTION_TRIGGER_FRACTION` | `0.75` | ReAct 循环内触发比例 |
+    | `BELLDANDY_COMPACTION_ARCHIVAL_THRESHOLD` | `2000` | Rolling Summary 归档阈值 |
+    | `BELLDANDY_COMPACTION_MODEL` | （空，复用主模型） | 摘要专用模型 |
+    | `BELLDANDY_COMPACTION_BASE_URL` | （空，复用主模型） | 摘要专用 API 地址 |
+    | `BELLDANDY_COMPACTION_API_KEY` | （空，复用主模型） | 摘要专用 API 密钥 |
+- **价值**：
+    - 长时间自动化任务不再因上下文溢出而中断或丢失关键信息。
+    - 模型摘要保留语义，远优于机械截断。
+    - 增量更新避免重复计算，降低 token 消耗。
+    - 三层渐进降级确保任何情况下都不会阻塞对话。
 
 ---
 
@@ -930,7 +990,8 @@ Moltbot 支持大量第三方集成插件（Skills），例如：
 | **记忆读写** | `memory_read`, `memory_write` |
 | **飞书渠道** | `FeishuChannel`（WebSocket 长连接） |
 | **定时触发** | `Heartbeat Runner`（读取 HEARTBEAT.md） |
-| **会话历史** | `ConversationStore`（内存 + TTL） |
+| **会话历史** | `ConversationStore`（内存 + TTL + 文件持久化） |
+| **上下文压缩** | 三层渐进式压缩（Archival Summary → Rolling Summary → Working Memory），模型摘要 + 降级兜底 |
 
 ---
 

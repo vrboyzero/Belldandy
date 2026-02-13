@@ -8,6 +8,7 @@ import type { AgentRunInput, AgentStreamItem, BelldandyAgent, AgentHooks } from 
 import type { HookRunner } from "./hook-runner.js";
 import { type ModelProfile, type FailoverLogger } from "./failover-client.js";
 import { type VideoUploadConfig } from "./multimodal.js";
+import { type CompactionOptions, type SummarizerFn } from "./compaction.js";
 type ApiProtocol = "openai" | "anthropic";
 export type ToolEnabledAgentOptions = {
     baseUrl: string;
@@ -35,6 +36,10 @@ export type ToolEnabledAgentOptions = {
     protocol?: ApiProtocol;
     /** 最大输入 token 数限制（超过时自动裁剪历史消息，0 或不设表示不限制） */
     maxInputTokens?: number;
+    /** ReAct 循环内压缩配置（可选） */
+    compaction?: CompactionOptions;
+    /** 模型摘要函数（用于循环内压缩） */
+    summarizer?: SummarizerFn;
 };
 export declare class ToolEnabledAgent implements BelldandyAgent {
     private readonly opts;
@@ -42,6 +47,11 @@ export declare class ToolEnabledAgent implements BelldandyAgent {
     constructor(opts: ToolEnabledAgentOptions);
     run(input: AgentRunInput): AsyncIterable<AgentStreamItem>;
     private callModel;
+    /**
+     * ReAct 循环内压缩：将 messages 数组中的旧历史消息压缩为摘要。
+     * 直接修改 messages 数组（in-place），返回更新后的 CompactionState。
+     */
+    private compactInLoop;
 }
 export {};
 //# sourceMappingURL=tool-agent.d.ts.map

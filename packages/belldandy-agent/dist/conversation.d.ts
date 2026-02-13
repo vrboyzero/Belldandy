@@ -1,4 +1,4 @@
-import { type CompactionOptions } from "./compaction.js";
+import { type CompactionOptions, type CompactionState, type SummarizerFn } from "./compaction.js";
 /**
  * 对话消息
  */
@@ -28,6 +28,24 @@ export type ConversationStoreOptions = {
     dataDir?: string;
     /** 对话压缩配置（可选，设置后启用自动压缩） */
     compaction?: CompactionOptions;
+    /** 模型摘要函数（可选，注入后启用模型摘要） */
+    summarizer?: SummarizerFn;
+    /** 压缩前回调（用于接入 hook 系统） */
+    onBeforeCompaction?: (event: {
+        messageCount: number;
+        tokenCount?: number;
+        tier?: string;
+        source?: string;
+    }) => void;
+    /** 压缩后回调（用于接入 hook 系统） */
+    onAfterCompaction?: (event: {
+        messageCount: number;
+        tokenCount?: number;
+        compactedCount: number;
+        tier?: string;
+        source?: string;
+        originalTokenCount?: number;
+    }) => void;
 };
 /**
  * 会话存储
@@ -35,10 +53,14 @@ export type ConversationStoreOptions = {
  */
 export declare class ConversationStore {
     private conversations;
+    private compactionStates;
     private readonly maxHistory;
     private readonly ttlSeconds;
     private readonly dataDir?;
     private readonly compactionOpts?;
+    private readonly summarizer?;
+    private readonly onBeforeCompaction?;
+    private readonly onAfterCompaction?;
     constructor(options?: ConversationStoreOptions);
     /**
      * 获取会话
@@ -71,8 +93,8 @@ export declare class ConversationStore {
         content: string;
     }>;
     /**
-     * 获取历史消息，自动应用压缩（如果配置了 compaction）。
-     * 当历史 token 超过阈值时，旧消息会被摘要替换。
+     * 获取历史消息，自动应用增量压缩（如果配置了 compaction）。
+     * 使用三层渐进式压缩：Archival Summary → Rolling Summary → Working Memory
      */
     getHistoryCompacted(id: string, overrideOpts?: CompactionOptions): Promise<{
         history: Array<{
@@ -81,5 +103,13 @@ export declare class ConversationStore {
         }>;
         compacted: boolean;
     }>;
+    /**
+     * 获取会话的压缩状态
+     */
+    getCompactionState(id: string): CompactionState;
+    /**
+     * 更新并持久化压缩状态
+     */
+    setCompactionState(id: string, state: CompactionState): void;
 }
 //# sourceMappingURL=conversation.d.ts.map

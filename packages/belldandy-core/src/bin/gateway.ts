@@ -13,6 +13,8 @@ import {
   loadModelFallbacks,
   type ModelProfile,
   type VideoUploadConfig,
+  FailoverClient,
+  type SummarizerFn,
 } from "@belldandy/agent";
 import {
   ToolExecutor,
@@ -264,6 +266,14 @@ const agentTimeoutMsRaw = readEnv("BELLDANDY_AGENT_TIMEOUT_MS");
 const agentTimeoutMs = agentTimeoutMsRaw ? Math.max(5000, parseInt(agentTimeoutMsRaw, 10) || 120_000) : undefined;
 const maxInputTokensRaw = readEnv("BELLDANDY_MAX_INPUT_TOKENS");
 const maxInputTokens = maxInputTokensRaw ? parseInt(maxInputTokensRaw, 10) || 0 : 0;
+
+// Compaction 配置
+const compactionEnabled = readEnv("BELLDANDY_COMPACTION_ENABLED") !== "false";
+const compactionTriggerFraction = parseFloat(readEnv("BELLDANDY_COMPACTION_TRIGGER_FRACTION") || "0.75") || 0.75;
+const compactionArchivalThreshold = parseInt(readEnv("BELLDANDY_COMPACTION_ARCHIVAL_THRESHOLD") || "2000", 10);
+const compactionModel = readEnv("BELLDANDY_COMPACTION_MODEL");
+const compactionBaseUrl = readEnv("BELLDANDY_COMPACTION_BASE_URL");
+const compactionApiKey = readEnv("BELLDANDY_COMPACTION_API_KEY");
 
 // Video File Upload (dedicated endpoint when chat proxy doesn't support /files)
 const videoFileApiUrl = readEnv("BELLDANDY_VIDEO_FILE_API_URL");
@@ -553,6 +563,8 @@ Keep responses concise and natural for spoken delivery.`;
         videoUploadConfig,
         protocol: agentProtocol,
         ...(maxInputTokens > 0 && { maxInputTokens }),
+        compaction: compactionOpts,
+        summarizer: compactionSummarizer,
       });
     }
     return new OpenAIChatAgent({
@@ -573,13 +585,61 @@ Keep responses concise and natural for spoken delivery.`;
 const sessionsDir = path.join(stateDir, "sessions");
 fs.mkdirSync(sessionsDir, { recursive: true });
 
+// 创建 summarizer 函数（基于 FailoverClient，用便宜模型生成摘要）
+let compactionSummarizer: SummarizerFn | undefined;
+if (compactionEnabled) {
+  // 优先使用专用压缩配置，回退到主模型配置
+  const summarizerBaseUrl = compactionBaseUrl || openaiBaseUrl;
+  const summarizerApiKey = compactionApiKey || openaiApiKey;
+  const summarizerModel = compactionModel || openaiModel;
+  if (summarizerBaseUrl && summarizerApiKey && summarizerModel) {
+    const summarizerClient = new FailoverClient({
+      primary: { id: "compaction", baseUrl: summarizerBaseUrl, apiKey: summarizerApiKey, model: summarizerModel },
+      logger,
+    });
+    compactionSummarizer = async (prompt: string): Promise<string> => {
+      const { response } = await summarizerClient.fetchWithFailover({
+        timeoutMs: 30_000,
+        buildRequest: (profile) => {
+          const url = `${profile.baseUrl.replace(/\/$/, "")}/v1/chat/completions`;
+          return {
+            url,
+            init: {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${profile.apiKey}`,
+              },
+              body: JSON.stringify({
+                model: profile.model,
+                messages: [{ role: "user", content: prompt }],
+                max_tokens: 1024,
+                temperature: 0.3,
+              }),
+            },
+          };
+        },
+      });
+      const json = await response.json() as any;
+      return json.choices?.[0]?.message?.content ?? "";
+    };
+    logger.info("compaction", `Summarizer initialized (model: ${summarizerModel}, baseUrl: ${summarizerBaseUrl})`);
+  }
+}
+
+const compactionOpts = {
+  tokenThreshold: parseInt(readEnv("BELLDANDY_COMPACTION_THRESHOLD") || "12000", 10),
+  keepRecentCount: parseInt(readEnv("BELLDANDY_COMPACTION_KEEP_RECENT") || "10", 10),
+  triggerFraction: compactionTriggerFraction,
+  archivalThreshold: compactionArchivalThreshold,
+  enabled: compactionEnabled,
+};
+
 const conversationStore = new ConversationStore({
   dataDir: sessionsDir,
   maxHistory: parseInt(readEnv("BELLDANDY_MAX_HISTORY") || "50", 10),
-  compaction: {
-    tokenThreshold: parseInt(readEnv("BELLDANDY_COMPACTION_THRESHOLD") || "12000", 10),
-    keepRecentCount: parseInt(readEnv("BELLDANDY_COMPACTION_KEEP_RECENT") || "6", 10),
-  },
+  compaction: compactionOpts,
+  summarizer: compactionSummarizer,
 });
 
 const ttsEnabledPath = path.join(stateDir, "TTS_ENABLED");

@@ -1,6 +1,15 @@
 import fs from "node:fs";
 import path from "node:path";
-import { needsCompaction, compactMessages, estimateMessagesTokens, type CompactionOptions } from "./compaction.js";
+import {
+    needsCompaction,
+    compactIncremental,
+    compactMessages,
+    estimateMessagesTokens,
+    createEmptyCompactionState,
+    type CompactionOptions,
+    type CompactionState,
+    type SummarizerFn,
+} from "./compaction.js";
 
 /**
  * 对话消息
@@ -33,6 +42,12 @@ export type ConversationStoreOptions = {
     dataDir?: string;
     /** 对话压缩配置（可选，设置后启用自动压缩） */
     compaction?: CompactionOptions;
+    /** 模型摘要函数（可选，注入后启用模型摘要） */
+    summarizer?: SummarizerFn;
+    /** 压缩前回调（用于接入 hook 系统） */
+    onBeforeCompaction?: (event: { messageCount: number; tokenCount?: number; tier?: string; source?: string }) => void;
+    /** 压缩后回调（用于接入 hook 系统） */
+    onAfterCompaction?: (event: { messageCount: number; tokenCount?: number; compactedCount: number; tier?: string; source?: string; originalTokenCount?: number }) => void;
 };
 
 /**
@@ -41,16 +56,23 @@ export type ConversationStoreOptions = {
  */
 export class ConversationStore {
     private conversations = new Map<string, Conversation>();
+    private compactionStates = new Map<string, CompactionState>();
     private readonly maxHistory: number;
     private readonly ttlSeconds: number;
     private readonly dataDir?: string;
     private readonly compactionOpts?: CompactionOptions;
+    private readonly summarizer?: SummarizerFn;
+    private readonly onBeforeCompaction?: ConversationStoreOptions["onBeforeCompaction"];
+    private readonly onAfterCompaction?: ConversationStoreOptions["onAfterCompaction"];
 
     constructor(options: ConversationStoreOptions = {}) {
         this.maxHistory = options.maxHistory ?? 20;
         this.ttlSeconds = options.ttlSeconds ?? 3600;
         this.dataDir = options.dataDir;
         this.compactionOpts = options.compaction;
+        this.summarizer = options.summarizer;
+        this.onBeforeCompaction = options.onBeforeCompaction;
+        this.onAfterCompaction = options.onAfterCompaction;
 
         if (this.dataDir) {
             fs.mkdirSync(this.dataDir, { recursive: true });
@@ -216,8 +238,8 @@ export class ConversationStore {
     }
 
     /**
-     * 获取历史消息，自动应用压缩（如果配置了 compaction）。
-     * 当历史 token 超过阈值时，旧消息会被摘要替换。
+     * 获取历史消息，自动应用增量压缩（如果配置了 compaction）。
+     * 使用三层渐进式压缩：Archival Summary → Rolling Summary → Working Memory
      */
     async getHistoryCompacted(
         id: string,
@@ -226,11 +248,86 @@ export class ConversationStore {
         const history = this.getHistory(id);
         const opts = overrideOpts ?? this.compactionOpts;
 
-        if (!opts || !needsCompaction(history, opts)) {
+        if (!opts || opts.enabled === false || !needsCompaction(history, opts)) {
             return { history, compacted: false };
         }
 
-        const result = await compactMessages(history, opts);
+        // 加载或创建压缩状态
+        const state = this.getCompactionState(id);
+
+        // 触发 before_compaction 回调
+        this.onBeforeCompaction?.({
+            messageCount: history.length,
+            tokenCount: estimateMessagesTokens(history),
+            source: "request",
+        });
+
+        const result = await compactIncremental(history, state, {
+            ...opts,
+            summarizer: this.summarizer,
+        });
+
+        if (result.compacted) {
+            // 持久化更新后的压缩状态
+            this.setCompactionState(id, result.state);
+
+            // 触发 after_compaction 回调
+            this.onAfterCompaction?.({
+                messageCount: result.messages.length,
+                tokenCount: result.compactedTokens,
+                compactedCount: history.length - result.messages.length,
+                tier: result.tier,
+                source: "request",
+                originalTokenCount: result.originalTokens,
+            });
+        }
+
         return { history: result.messages, compacted: result.compacted };
+    }
+
+    // ─── CompactionState 持久化 ──────────────────────────────────────────
+
+    /**
+     * 获取会话的压缩状态
+     */
+    getCompactionState(id: string): CompactionState {
+        // 内存优先
+        const cached = this.compactionStates.get(id);
+        if (cached) return cached;
+
+        // 尝试从磁盘加载
+        if (this.dataDir) {
+            const filePath = path.join(this.dataDir, `${id}.compaction.json`);
+            try {
+                if (fs.existsSync(filePath)) {
+                    const data = JSON.parse(fs.readFileSync(filePath, "utf-8")) as CompactionState;
+                    this.compactionStates.set(id, data);
+                    return data;
+                }
+            } catch {
+                // 文件损坏，返回空状态
+            }
+        }
+
+        const empty = createEmptyCompactionState();
+        this.compactionStates.set(id, empty);
+        return empty;
+    }
+
+    /**
+     * 更新并持久化压缩状态
+     */
+    setCompactionState(id: string, state: CompactionState): void {
+        this.compactionStates.set(id, state);
+
+        if (this.dataDir) {
+            const filePath = path.join(this.dataDir, `${id}.compaction.json`);
+            const data = JSON.stringify(state, null, 2);
+            fs.writeFile(filePath, data, "utf-8", (err) => {
+                if (err) {
+                    console.error(`Failed to save compaction state for ${id}:`, err);
+                }
+            });
+        }
     }
 }
