@@ -210,6 +210,48 @@ export class ConversationStore {
         }
         return { history: result.messages, compacted: result.compacted };
     }
+    /**
+     * 强制执行上下文压缩（跳过 needsCompaction 检查）。
+     * 用于用户手动触发 /compact 命令。
+     * 如果历史消息过少（≤2）或未配置 compaction，返回 compacted: false。
+     */
+    async forceCompact(id) {
+        const history = this.getHistory(id);
+        const opts = this.compactionOpts;
+        // 无压缩配置或历史太短，无法压缩
+        if (!opts || history.length <= 2) {
+            return { history, compacted: false };
+        }
+        const state = this.getCompactionState(id);
+        const originalTokens = estimateMessagesTokens(history);
+        this.onBeforeCompaction?.({
+            messageCount: history.length,
+            tokenCount: originalTokens,
+            source: "manual",
+        });
+        const result = await compactIncremental(history, state, {
+            ...opts,
+            summarizer: this.summarizer,
+        });
+        if (result.compacted) {
+            this.setCompactionState(id, result.state);
+            this.onAfterCompaction?.({
+                messageCount: result.messages.length,
+                tokenCount: result.compactedTokens,
+                compactedCount: history.length - result.messages.length,
+                tier: result.tier,
+                source: "manual",
+                originalTokenCount: result.originalTokens,
+            });
+        }
+        return {
+            history: result.messages,
+            compacted: result.compacted,
+            originalTokens: result.originalTokens,
+            compactedTokens: result.compactedTokens,
+            tier: result.tier,
+        };
+    }
     // ─── CompactionState 持久化 ──────────────────────────────────────────
     /**
      * 获取会话的压缩状态

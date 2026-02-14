@@ -380,6 +380,72 @@ async function sendMessage() {
     return;
   }
 
+  // ── 斜杠命令：/compact ──
+  if (text === "/compact") {
+    if (!activeConversationId) {
+      appendMessage("bot", "当前没有活跃的对话，无法压缩上下文。");
+      return;
+    }
+    appendMessage("me", "/compact");
+    const statusEl = appendMessage("bot", "正在压缩上下文…");
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "context.compact",
+      params: { conversationId: activeConversationId },
+    });
+    if (res && res.ok && res.payload) {
+      const p = res.payload;
+      if (p.compacted) {
+        statusEl.textContent = `上下文压缩完成（${p.tier ?? "unknown"}）：${p.originalTokens ?? "?"} → ${p.compactedTokens ?? "?"} tokens`;
+      } else {
+        statusEl.textContent = "当前上下文较短，无需压缩。";
+      }
+    } else {
+      statusEl.textContent = "压缩失败：" + (res?.error?.message || "未知错误");
+    }
+    return;
+  }
+
+  // ── 斜杠命令：/restart ──
+  if (text === "/restart") {
+    appendMessage("me", "/restart");
+    const statusEl = appendMessage("bot", "正在重启服务…");
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "system.restart",
+    });
+    if (res && res.ok) {
+      statusEl.textContent = "服务正在重启，请稍候…";
+      setStatus("Restarting...");
+    } else {
+      statusEl.textContent = "重启失败：" + (res?.error?.message || "未知错误");
+    }
+    return;
+  }
+
+  // ── 斜杠命令：/doctor ──
+  if (text === "/doctor") {
+    appendMessage("me", "/doctor");
+    const statusEl = appendMessage("bot", "正在执行健康检查…");
+    const res = await sendReq({
+      type: "req",
+      id: makeId(),
+      method: "system.doctor",
+    });
+    if (res && res.ok && res.payload && res.payload.checks) {
+      const lines = res.payload.checks.map(c => {
+        const icon = c.status === "pass" ? "✅" : c.status === "warn" ? "⚠️" : "❌";
+        return `${icon} ${c.name}: ${c.message}`;
+      });
+      statusEl.textContent = lines.join("\n");
+    } else {
+      statusEl.textContent = "健康检查失败：" + (res?.error?.message || "未知错误");
+    }
+    return;
+  }
+
   appendMessage("me", text + (pendingAttachments.length ? ` [${pendingAttachments.length} 附件]` : ""));
   botMsgEl = appendMessage("bot", "");
 

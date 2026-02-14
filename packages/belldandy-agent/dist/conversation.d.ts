@@ -104,6 +104,21 @@ export declare class ConversationStore {
         compacted: boolean;
     }>;
     /**
+     * 强制执行上下文压缩（跳过 needsCompaction 检查）。
+     * 用于用户手动触发 /compact 命令。
+     * 如果历史消息过少（≤2）或未配置 compaction，返回 compacted: false。
+     */
+    forceCompact(id: string): Promise<{
+        history: Array<{
+            role: "user" | "assistant";
+            content: string;
+        }>;
+        compacted: boolean;
+        originalTokens?: number;
+        compactedTokens?: number;
+        tier?: string;
+    }>;
+    /**
      * 获取会话的压缩状态
      */
     getCompactionState(id: string): CompactionState;

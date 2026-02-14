@@ -16,6 +16,7 @@ const DEFAULT_METHODS = [
     "workspace.list",
     "workspace.read",
     "workspace.write",
+    "context.compact",
 ];
 const DEFAULT_EVENTS = ["chat.delta", "chat.final", "agent.status", "token.usage", "pairing.required"];
 export async function startGatewayServer(opts) {
@@ -229,7 +230,7 @@ function acceptConnect(frame, authCfg) {
     return { ok: false, message: "invalid auth mode" };
 }
 async function handleReq(ws, req, ctx) {
-    const secureMethods = ["message.send", "config.read", "config.update", "system.restart", "system.doctor", "workspace.write", "workspace.read", "workspace.list"];
+    const secureMethods = ["message.send", "config.read", "config.update", "system.restart", "system.doctor", "workspace.write", "workspace.read", "workspace.list", "context.compact"];
     if (secureMethods.includes(req.method)) {
         const allowed = await isClientAllowed({ clientId: ctx.clientId, stateDir: ctx.stateDir });
         if (!allowed) {
@@ -733,6 +734,30 @@ async function handleReq(ws, req, ctx) {
             }
             catch (err) {
                 return { type: "res", id: req.id, ok: false, error: { code: "write_failed", message: String(err) } };
+            }
+        }
+        case "context.compact": {
+            const params = req.params;
+            const conversationId = params?.conversationId;
+            if (!conversationId || typeof conversationId !== "string") {
+                return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "conversationId is required" } };
+            }
+            try {
+                const result = await ctx.conversationStore.forceCompact(conversationId);
+                return {
+                    type: "res",
+                    id: req.id,
+                    ok: true,
+                    payload: {
+                        compacted: result.compacted,
+                        originalTokens: result.originalTokens,
+                        compactedTokens: result.compactedTokens,
+                        tier: result.tier,
+                    },
+                };
+            }
+            catch (err) {
+                return { type: "res", id: req.id, ok: false, error: { code: "compact_failed", message: String(err) } };
             }
         }
     }

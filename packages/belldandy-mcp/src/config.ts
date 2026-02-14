@@ -92,6 +92,121 @@ const MCPConfigSchema = z.object({
 });
 
 // ============================================================================
+// 外部格式兼容（Claude Desktop / Cursor 等通用 MCP 配置格式）
+// ============================================================================
+
+/**
+ * 外部 MCP 配置格式（事实标准）
+ *
+ * 形如：
+ * ```json
+ * {
+ *   "mcpServers": {
+ *     "server-id": {
+ *       "command": "npx",
+ *       "args": ["-y", "some-package"],
+ *       "env": { "KEY": "value" }
+ *     },
+ *     "remote-server": {
+ *       "url": "https://example.com/mcp",
+ *       "headers": { "Authorization": "Bearer ..." }
+ *     }
+ *   }
+ * }
+ * ```
+ */
+interface ExternalServerEntry {
+  /** stdio: 命令 */
+  command?: string;
+  /** stdio: 参数 */
+  args?: string[];
+  /** stdio: 环境变量 */
+  env?: Record<string, string>;
+  /** stdio: 工作目录 */
+  cwd?: string;
+  /** stdio: 显式 type 标记（部分工具会写） */
+  type?: string;
+  /** SSE/HTTP: url 字段 */
+  url?: string;
+  /** SSE/HTTP: baseUrl 字段（部分工具用这个） */
+  baseUrl?: string;
+  /** SSE/HTTP: 请求头 */
+  headers?: Record<string, string>;
+  /** 可选：是否禁用 */
+  disabled?: boolean;
+}
+
+interface ExternalMCPConfig {
+  mcpServers: Record<string, ExternalServerEntry>;
+  imports?: string[];
+}
+
+/**
+ * 检测 JSON 对象是否为外部格式（含 mcpServers 键）
+ */
+function isExternalFormat(raw: unknown): raw is ExternalMCPConfig {
+  return (
+    typeof raw === "object" &&
+    raw !== null &&
+    "mcpServers" in raw &&
+    typeof (raw as Record<string, unknown>).mcpServers === "object"
+  );
+}
+
+/**
+ * 将外部格式转换为 Belldandy 内部 MCPConfig
+ *
+ * 转换规则：
+ * - 对象 key → id + name
+ * - command/args/env/cwd → transport { type: "stdio", ... }
+ * - url 或 baseUrl → transport { type: "sse", url, headers? }
+ * - disabled: true → enabled: false
+ * - 其余字段使用默认值
+ */
+function convertExternalConfig(external: ExternalMCPConfig): Record<string, unknown> {
+  const servers: Record<string, unknown>[] = [];
+
+  for (const [id, entry] of Object.entries(external.mcpServers)) {
+    if (!entry || typeof entry !== "object") continue;
+
+    // 判断传输类型
+    const sseUrl = entry.url || entry.baseUrl;
+    const isSSE = !!sseUrl && !entry.command;
+
+    let transport: Record<string, unknown>;
+    if (isSSE) {
+      transport = {
+        type: "sse",
+        url: sseUrl,
+        ...(entry.headers ? { headers: entry.headers } : {}),
+      };
+    } else {
+      transport = {
+        type: "stdio",
+        command: entry.command ?? "",
+        ...(entry.args ? { args: entry.args } : {}),
+        ...(entry.env ? { env: entry.env } : {}),
+        ...(entry.cwd ? { cwd: entry.cwd } : {}),
+      };
+    }
+
+    servers.push({
+      id,
+      name: id,
+      transport,
+      enabled: entry.disabled === true ? false : true,
+    });
+  }
+
+  mcpLog("MCP", `检测到外部格式（mcpServers），已转换 ${servers.length} 个服务器`);
+
+  return {
+    version: "1.0.0",
+    servers,
+  };
+}
+
+// ============================================================================
 // 配置加载函数
 // ============================================================================
 
@@ -124,7 +239,12 @@ export async function loadConfig(): Promise<MCPConfig> {
   try {
     // 读取配置文件
     const content = await readFile(MCP_CONFIG_PATH, "utf-8");
-    const rawConfig = JSON.parse(content);
+    let rawConfig = JSON.parse(content);
+
+    // 兼容外部格式（Claude Desktop / Cursor 等 mcpServers 格式）
+    if (isExternalFormat(rawConfig)) {
+      rawConfig = convertExternalConfig(rawConfig);
+    }
 
     // 验证配置
     const result = MCPConfigSchema.safeParse(rawConfig);

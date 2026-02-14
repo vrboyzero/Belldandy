@@ -232,9 +232,10 @@ Belldandy 采用**三层渐进式压缩**架构：
 - **Rolling Summary**：当 Working Memory 溢出时，溢出的消息不会丢弃，而是由模型生成增量摘要合入此层。每次只处理新溢出的消息，不会从头重新生成。
 - **Archival Summary**：当 Rolling Summary 本身过大时（默认超过 2000 token），会被进一步压缩为超浓缩版本，只保留最终结论、用户偏好和关键决策。
 
-**压缩在两个时机触发**：
+**压缩在三个时机触发**：
 1. **请求前**：每次你发送消息时，Gateway 检查历史 token 是否超过阈值。
 2. **ReAct 循环内**：Agent 执行工具调用链时，每次调用模型前检查上下文使用比例，防止长工具链撑爆上下文。
+3. **手动命令**：在 WebChat 中输入 `/compact`，立即执行压缩（跳过阈值检查）。
 
 **降级策略**：如果模型摘要调用失败（超时、服务不可用等），会自动降级为文本截断摘要（每条消息取前 200 字符），确保不会因为压缩失败而阻塞对话。
 
@@ -291,6 +292,24 @@ BELLDANDY_COMPACTION_KEEP_RECENT=10
 #### 压缩状态持久化
 
 每个会话的压缩状态（滚动摘要、归档摘要等）会自动保存到 `~/.belldandy/sessions/{会话ID}.compaction.json`。这意味着即使 Belldandy 重启，之前的摘要也不会丢失。
+
+#### 手动触发压缩
+
+除了自动压缩外，你也可以随时在 WebChat 输入框中输入斜杠命令手动触发：
+
+```
+/compact
+```
+
+执行后会立即对当前会话的上下文进行压缩（跳过 token 阈值检查），并显示压缩结果：
+
+- 压缩成功时：显示压缩层级（rolling / archival）以及压缩前后的 token 数
+- 历史过短时：提示"当前上下文较短，无需压缩"
+
+适用场景：
+- 对话已经很长，但还没触发自动压缩阈值，想主动释放上下文空间
+- 即将开始一个需要大量上下文的复杂任务，先压缩腾出空间
+- Agent 在执行工具链时上下文接近上限，手动干预
 
 ### 3.6 可视化配置 (Settings UI)
 
@@ -781,7 +800,53 @@ BELLDANDY_MCP_ENABLED=true
 
 ### 12.2 配置 MCP 服务器
 
-在 `~/.belldandy/mcp.json` 中定义要连接的 MCP 服务器：
+在 `~/.belldandy/mcp.json` 中定义要连接的 MCP 服务器。Belldandy 支持两种配置格式，可任选其一。
+
+#### 格式一：通用格式（推荐）
+
+与 Claude Desktop、Cursor、Windsurf、Cline 等工具通用的事实标准格式。从这些工具迁移时可直接复制粘贴，无需改写。
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/user/documents"]
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_xxxxxxxxxxxx"
+      }
+    },
+    "remote-api": {
+      "url": "https://api.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer your-token"
+      }
+    }
+  }
+}
+```
+
+通用格式的字段说明：
+
+| 字段 | 说明 | 适用 |
+|------|------|------|
+| `command` | 要执行的命令 | stdio 服务器 |
+| `args` | 命令行参数 | stdio 服务器 |
+| `env` | 环境变量 | stdio 服务器 |
+| `cwd` | 工作目录 | stdio 服务器 |
+| `url` / `baseUrl` | 服务器地址 | 远程 SSE 服务器 |
+| `headers` | HTTP 请求头 | 远程 SSE 服务器 |
+| `disabled` | 设为 `true` 可禁用该服务器 | 通用 |
+
+> **💡 提示**：对象的 key（如 `"filesystem"`、`"github"`）会自动作为服务器 ID 和名称。
+
+#### 格式二：Belldandy 原生格式
+
+提供更多控制选项（超时、重试、自动连接等）。
 
 ```json
 {
@@ -822,6 +887,8 @@ BELLDANDY_MCP_ENABLED=true
   }
 }
 ```
+
+> **注意**：一个 `mcp.json` 文件只能使用一种格式。系统会自动检测格式并处理，无需手动指定。
 
 ### 12.3 传输类型
 

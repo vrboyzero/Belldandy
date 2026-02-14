@@ -74,6 +74,63 @@ const MCPConfigSchema = z.object({
     servers: z.array(ServerConfigSchema).default([]),
     settings: SettingsSchema.optional(),
 });
+/**
+ * 检测 JSON 对象是否为外部格式（含 mcpServers 键）
+ */
+function isExternalFormat(raw) {
+    return (typeof raw === "object" &&
+        raw !== null &&
+        "mcpServers" in raw &&
+        typeof raw.mcpServers === "object");
+}
+/**
+ * 将外部格式转换为 Belldandy 内部 MCPConfig
+ *
+ * 转换规则：
+ * - 对象 key → id + name
+ * - command/args/env/cwd → transport { type: "stdio", ... }
+ * - url 或 baseUrl → transport { type: "sse", url, headers? }
+ * - disabled: true → enabled: false
+ * - 其余字段使用默认值
+ */
+function convertExternalConfig(external) {
+    const servers = [];
+    for (const [id, entry] of Object.entries(external.mcpServers)) {
+        if (!entry || typeof entry !== "object")
+            continue;
+        // 判断传输类型
+        const sseUrl = entry.url || entry.baseUrl;
+        const isSSE = !!sseUrl && !entry.command;
+        let transport;
+        if (isSSE) {
+            transport = {
+                type: "sse",
+                url: sseUrl,
+                ...(entry.headers ? { headers: entry.headers } : {}),
+            };
+        }
+        else {
+            transport = {
+                type: "stdio",
+                command: entry.command ?? "",
+                ...(entry.args ? { args: entry.args } : {}),
+                ...(entry.env ? { env: entry.env } : {}),
+                ...(entry.cwd ? { cwd: entry.cwd } : {}),
+            };
+        }
+        servers.push({
+            id,
+            name: id,
+            transport,
+            enabled: entry.disabled === true ? false : true,
+        });
+    }
+    mcpLog("MCP", `检测到外部格式（mcpServers），已转换 ${servers.length} 个服务器`);
+    return {
+        version: "1.0.0",
+        servers,
+    };
+}
 // ============================================================================
 // 配置加载函数
 // ============================================================================
@@ -105,7 +162,11 @@ export async function loadConfig() {
     try {
         // 读取配置文件
         const content = await readFile(MCP_CONFIG_PATH, "utf-8");
-        const rawConfig = JSON.parse(content);
+        let rawConfig = JSON.parse(content);
+        // 兼容外部格式（Claude Desktop / Cursor 等 mcpServers 格式）
+        if (isExternalFormat(rawConfig)) {
+            rawConfig = convertExternalConfig(rawConfig);
+        }
         // 验证配置
         const result = MCPConfigSchema.safeParse(rawConfig);
         if (!result.success) {

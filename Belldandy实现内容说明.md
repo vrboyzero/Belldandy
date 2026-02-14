@@ -663,34 +663,52 @@
 - **实现内容**：
     - **新建 `@belldandy/mcp` 包**：完整的 MCP 客户端实现
     - **类型定义 (types.ts)**：配置类型、运行时状态、事件类型等
-    - **配置加载 (config.ts)**：使用 Zod 验证 `~/.belldandy/mcp.json` 配置
+    - **配置加载 (config.ts)**：使用 Zod 验证 `~/.belldandy/mcp.json` 配置，支持双格式兼容
     - **MCP 客户端 (client.ts)**：支持 stdio/SSE 两种传输方式
     - **工具桥接 (tool-bridge.ts)**：MCP 工具 → Belldandy Skills 转换
     - **管理器 (manager.ts)**：多服务器连接管理、工具发现、事件处理
     - **Gateway 集成**：启动时自动初始化 MCP 并注册工具
-- **配置示例** (`~/.belldandy/mcp.json`)：
-    ```json
-    {
-      "version": "1.0.0",
-      "servers": [
+    - **双格式配置兼容**：`loadConfig()` 自动检测并兼容两种 `mcp.json` 格式，用户无需手动转换
+- **配置格式**：
+    - **格式一：通用格式**（与 Claude Desktop / Cursor / Windsurf 等工具通用）：
+        ```json
         {
-          "id": "filesystem",
-          "name": "文件系统",
-          "transport": {
-            "type": "stdio",
-            "command": "npx",
-            "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]
-          },
-          "autoConnect": true,
-          "enabled": true
+          "mcpServers": {
+            "server-id": {
+              "command": "npx",
+              "args": ["-y", "some-mcp-server"],
+              "env": { "API_KEY": "xxx" }
+            },
+            "remote-server": {
+              "url": "https://api.example.com/mcp"
+            }
+          }
         }
-      ],
-      "settings": {
-        "defaultTimeout": 30000,
-        "toolPrefix": true
-      }
-    }
-    ```
+        ```
+        转换规则：对象 key → `id`/`name`，`command`/`args`/`env`/`cwd` → `transport: { type: "stdio" }`，`url`/`baseUrl` → `transport: { type: "sse" }`，`disabled: true` → `enabled: false`。
+    - **格式二：Belldandy 原生格式**（提供更多控制选项）：
+        ```json
+        {
+          "version": "1.0.0",
+          "servers": [
+            {
+              "id": "filesystem",
+              "name": "文件系统",
+              "transport": {
+                "type": "stdio",
+                "command": "npx",
+                "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path"]
+              },
+              "autoConnect": true,
+              "enabled": true
+            }
+          ],
+          "settings": {
+            "defaultTimeout": 30000,
+            "toolPrefix": true
+          }
+        }
+        ```
 - **新增环境变量**：
     | 变量 | 说明 |
     |------|------|
