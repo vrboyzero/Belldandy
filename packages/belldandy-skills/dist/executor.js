@@ -20,6 +20,7 @@ export class ToolExecutor {
     auditLogger;
     agentCapabilities;
     logger;
+    isToolDisabled;
     constructor(options) {
         this.tools = new Map(options.tools.map(t => [t.definition.name, t]));
         this.workspaceRoot = options.workspaceRoot;
@@ -28,10 +29,15 @@ export class ToolExecutor {
         this.auditLogger = options.auditLogger;
         this.agentCapabilities = options.agentCapabilities;
         this.logger = options.logger;
+        this.isToolDisabled = options.isToolDisabled;
     }
-    /** 获取所有工具定义（用于发送给模型） */
+    /** 获取所有工具定义（用于发送给模型），已过滤禁用工具 */
     getDefinitions() {
-        return Array.from(this.tools.values()).map(t => ({
+        const all = Array.from(this.tools.values());
+        const active = this.isToolDisabled
+            ? all.filter(t => !this.isToolDisabled(t.definition.name))
+            : all;
+        return active.map(t => ({
             type: "function",
             function: {
                 name: t.definition.name,
@@ -39,6 +45,10 @@ export class ToolExecutor {
                 parameters: t.definition.parameters,
             },
         }));
+    }
+    /** 获取所有已注册工具名（不经过 disabled 过滤，用于调用设置列表） */
+    getRegisteredToolNames() {
+        return Array.from(this.tools.keys());
     }
     /** 检查工具是否存在 */
     hasTool(name) {
@@ -62,6 +72,19 @@ export class ToolExecutor {
     /** 执行工具调用 */
     async execute(request, conversationId) {
         const start = Date.now();
+        // 防御性检查：拒绝已禁用的工具调用
+        if (this.isToolDisabled?.(request.name)) {
+            const result = {
+                id: request.id,
+                name: request.name,
+                success: false,
+                output: "",
+                error: `工具 ${request.name} 已被禁用`,
+                durationMs: Date.now() - start,
+            };
+            this.audit(result, conversationId, request.arguments);
+            return result;
+        }
         const tool = this.tools.get(request.name);
         if (!tool) {
             const result = {

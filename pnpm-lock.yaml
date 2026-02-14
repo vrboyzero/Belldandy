@@ -148,6 +148,9 @@ importers:
       '@belldandy/memory':
         specifier: workspace:*
         version: link:../belldandy-memory
+      '@belldandy/plugins':
+        specifier: workspace:*
+        version: link:../belldandy-plugins
       '@belldandy/protocol':
         specifier: workspace:*
         version: link:../belldandy-protocol

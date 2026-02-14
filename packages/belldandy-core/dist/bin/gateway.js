@@ -11,6 +11,8 @@ import { startHeartbeatRunner } from "../heartbeat/index.js";
 import { CronStore, startCronScheduler } from "../cron/index.js";
 import { initMCPIntegration, registerMCPToolsToExecutor, printMCPStatus, } from "../mcp/index.js";
 import { createLoggerFromEnv } from "../logger/index.js";
+import { ToolsConfigManager } from "../tools-config.js";
+import { PluginRegistry } from "@belldandy/plugins";
 // --- Env Loading ---
 loadEnvFileIfExists(path.join(process.cwd(), ".env.local"));
 loadEnvFileIfExists(path.join(process.cwd(), ".env"));
@@ -296,6 +298,12 @@ const cronStore = new CronStore(stateDir);
 let cronSchedulerHandle;
 // 延迟绑定 broadcast：工具注册时 server 尚未创建，执行时才调用
 let serverBroadcast;
+// 2.5 Init ToolsConfigManager (调用设置)
+const toolsConfigManager = new ToolsConfigManager(stateDir, {
+    info: (m) => logger.info("tools-config", m),
+    warn: (m) => logger.warn("tools-config", m),
+});
+await toolsConfigManager.load();
 // 3. Init Executor (conditional)
 const toolsToRegister = toolsEnabled
     ? [
@@ -346,6 +354,7 @@ const toolExecutor = new ToolExecutor({
     workspaceRoot: stateDir, // Use ~/.belldandy as the workspace root for file operations
     extraWorkspaceRoots, // 额外允许 file_read/file_write/file_delete 的根目录（如其他盘符）
     policy: toolsPolicy,
+    isToolDisabled: (name) => toolsConfigManager.isToolDisabled(name),
     auditLogger: (log) => {
         const msg = log.success
             ? `${log.toolName} completed in ${log.durationMs}ms`
@@ -387,6 +396,32 @@ if (mcpEnabled && toolsEnabled) {
 }
 else if (mcpEnabled && !toolsEnabled) {
     logger.warn("mcp", "BELLDANDY_MCP_ENABLED=true 但 BELLDANDY_TOOLS_ENABLED=false，MCP 需要启用工具系统");
+}
+// 4.2 Load Plugins (~/.belldandy/plugins/)
+const pluginRegistry = new PluginRegistry();
+const pluginsDir = path.join(stateDir, "plugins");
+try {
+    if (fs.existsSync(pluginsDir)) {
+        await pluginRegistry.loadPluginDirectory(pluginsDir);
+        const pluginTools = pluginRegistry.getAllTools();
+        if (pluginTools.length > 0) {
+            for (const tool of pluginTools) {
+                toolExecutor.registerTool(tool);
+            }
+            logger.info("plugins", `注册了 ${pluginTools.length} 个插件工具`);
+        }
+        // 注册插件工具映射到 toolsConfigManager
+        for (const [pluginId, toolNames] of pluginRegistry.getPluginToolMap()) {
+            toolsConfigManager.registerPluginTools(pluginId, toolNames);
+        }
+        const pluginIds = pluginRegistry.getPluginIds();
+        if (pluginIds.length > 0) {
+            logger.info("plugins", `已加载 ${pluginIds.length} 个插件: ${pluginIds.join(", ")}`);
+        }
+    }
+}
+catch (err) {
+    logger.warn("plugins", `插件加载失败: ${String(err)}`);
 }
 // 4.5 Auto-index memory files (MEMORY.md + memory/*.md)
 await ensureMemoryDir(stateDir);
@@ -550,6 +585,9 @@ const server = await startGatewayServer({
     conversationStore: conversationStore, // Pass shared instance
     onActivity,
     logger,
+    toolsConfigManager,
+    toolExecutor: toolsEnabled ? toolExecutor : undefined,
+    pluginRegistry,
     ttsEnabled: isTtsEnabledFn,
     ttsSynthesize: async (text) => {
         const result = await synthesizeSpeech({ text, stateDir });

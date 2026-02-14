@@ -35,6 +35,8 @@ export type ToolExecutorOptions = {
   agentCapabilities?: AgentCapabilities;
   /** 可选：传入后注入到 ToolContext，供工具使用 */
   logger?: ToolExecutorLogger;
+  /** 可选：运行时判断工具是否被禁用（用于调用设置开关） */
+  isToolDisabled?: (toolName: string) => boolean;
 };
 
 export class ToolExecutor {
@@ -45,6 +47,7 @@ export class ToolExecutor {
   private readonly auditLogger?: (log: ToolAuditLog) => void;
   private readonly agentCapabilities?: AgentCapabilities;
   private readonly logger?: ToolExecutorLogger;
+  private readonly isToolDisabled?: (toolName: string) => boolean;
 
   constructor(options: ToolExecutorOptions) {
     this.tools = new Map(options.tools.map(t => [t.definition.name, t]));
@@ -54,11 +57,16 @@ export class ToolExecutor {
     this.auditLogger = options.auditLogger;
     this.agentCapabilities = options.agentCapabilities;
     this.logger = options.logger;
+    this.isToolDisabled = options.isToolDisabled;
   }
 
-  /** 获取所有工具定义（用于发送给模型） */
+  /** 获取所有工具定义（用于发送给模型），已过滤禁用工具 */
   getDefinitions(): { type: "function"; function: { name: string; description: string; parameters: object } }[] {
-    return Array.from(this.tools.values()).map(t => ({
+    const all = Array.from(this.tools.values());
+    const active = this.isToolDisabled
+      ? all.filter(t => !this.isToolDisabled!(t.definition.name))
+      : all;
+    return active.map(t => ({
       type: "function" as const,
       function: {
         name: t.definition.name,
@@ -66,6 +74,11 @@ export class ToolExecutor {
         parameters: t.definition.parameters,
       },
     }));
+  }
+
+  /** 获取所有已注册工具名（不经过 disabled 过滤，用于调用设置列表） */
+  getRegisteredToolNames(): string[] {
+    return Array.from(this.tools.keys());
   }
 
   /** 检查工具是否存在 */
@@ -94,6 +107,21 @@ export class ToolExecutor {
   /** 执行工具调用 */
   async execute(request: ToolCallRequest, conversationId: string): Promise<ToolCallResult> {
     const start = Date.now();
+
+    // 防御性检查：拒绝已禁用的工具调用
+    if (this.isToolDisabled?.(request.name)) {
+      const result: ToolCallResult = {
+        id: request.id,
+        name: request.name,
+        success: false,
+        output: "",
+        error: `工具 ${request.name} 已被禁用`,
+        durationMs: Date.now() - start,
+      };
+      this.audit(result, conversationId, request.arguments);
+      return result;
+    }
+
     const tool = this.tools.get(request.name);
 
     if (!tool) {

@@ -21,6 +21,9 @@
     },
     {
       "path": "../belldandy-channels"
+    },
+    {
+      "path": "../belldandy-plugins"
     }
   ]
 }

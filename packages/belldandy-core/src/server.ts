@@ -20,6 +20,9 @@ import type {
 import { ensurePairingCode, isClientAllowed, resolveStateDir } from "./security/store.js";
 import type { BelldandyLogger } from "./logger/index.js";
 import { MemoryManager, registerGlobalMemoryManager } from "@belldandy/memory";
+import type { ToolsConfigManager } from "./tools-config.js";
+import type { ToolExecutor } from "@belldandy/skills";
+import type { PluginRegistry } from "@belldandy/plugins";
 
 export type GatewayServerOptions = {
   port: number;
@@ -41,6 +44,12 @@ export type GatewayServerOptions = {
   ttsEnabled?: () => boolean;
   /** Server-side auto TTS: synthesize speech from text */
   ttsSynthesize?: (text: string) => Promise<{ webPath: string; htmlAudio: string } | null>;
+  /** 调用设置管理器 */
+  toolsConfigManager?: ToolsConfigManager;
+  /** 工具执行器（用于获取已注册工具列表） */
+  toolExecutor?: ToolExecutor;
+  /** 插件注册表（用于获取已加载插件列表） */
+  pluginRegistry?: PluginRegistry;
 };
 
 export type GatewayServer = {
@@ -60,6 +69,8 @@ const DEFAULT_METHODS = [
   "workspace.read",
   "workspace.write",
   "context.compact",
+  "tools.list",
+  "tools.update",
 ];
 const DEFAULT_EVENTS = ["chat.delta", "chat.final", "agent.status", "token.usage", "pairing.required"];
 
@@ -240,6 +251,9 @@ export async function startGatewayServer(opts: GatewayServerOptions): Promise<Ga
         conversationStore,
         ttsEnabled: opts.ttsEnabled,
         ttsSynthesize: opts.ttsSynthesize,
+        toolsConfigManager: opts.toolsConfigManager,
+        toolExecutor: opts.toolExecutor,
+        pluginRegistry: opts.pluginRegistry,
       });
       if (res) sendRes(ws, res);
     });
@@ -319,6 +333,9 @@ async function handleReq(
     conversationStore: ConversationStore;
     ttsEnabled?: () => boolean;
     ttsSynthesize?: (text: string) => Promise<{ webPath: string; htmlAudio: string } | null>;
+    toolsConfigManager?: ToolsConfigManager;
+    toolExecutor?: ToolExecutor;
+    pluginRegistry?: PluginRegistry;
   },
 ): Promise<GatewayResFrame | null> {
   const secureMethods = ["message.send", "config.read", "config.update", "system.restart", "system.doctor", "workspace.write", "workspace.read", "workspace.list", "context.compact"];
@@ -695,6 +712,49 @@ async function handleReq(
         return { type: "res", id: req.id, ok: true };
       } catch (e) {
         return { type: "res", id: req.id, ok: false, error: { code: "write_failed", message: String(e) } };
+      }
+    }
+
+    case "tools.list": {
+      if (!ctx.toolExecutor || !ctx.toolsConfigManager) {
+        return { type: "res", id: req.id, ok: true, payload: { builtin: [], mcp: {}, plugins: [], disabled: { builtin: [], mcp_servers: [], plugins: [] } } };
+      }
+      const allNames = ctx.toolExecutor.getRegisteredToolNames();
+      const config = ctx.toolsConfigManager.getConfig();
+
+      // 分类工具
+      const builtin: string[] = [];
+      const mcp: Record<string, { tools: string[] }> = {};
+
+      for (const name of allNames) {
+        if (name.startsWith("mcp_")) {
+          // 提取 serverId: mcp_{serverId}_{toolName}
+          const rest = name.slice(4);
+          const idx = rest.indexOf("_");
+          const serverId = idx > 0 ? rest.slice(0, idx) : rest;
+          if (!mcp[serverId]) mcp[serverId] = { tools: [] };
+          mcp[serverId].tools.push(name);
+        } else {
+          builtin.push(name);
+        }
+      }
+
+      return { type: "res", id: req.id, ok: true, payload: { builtin, mcp, plugins: ctx.pluginRegistry?.getPluginIds() ?? [], disabled: config.disabled } };
+    }
+
+    case "tools.update": {
+      if (!ctx.toolsConfigManager) {
+        return { type: "res", id: req.id, ok: false, error: { code: "not_available", message: "Tools config not available" } };
+      }
+      const params = req.params as unknown as { disabled?: { builtin?: string[]; mcp_servers?: string[]; plugins?: string[] } } | undefined;
+      if (!params?.disabled) {
+        return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "Missing disabled" } };
+      }
+      try {
+        await ctx.toolsConfigManager.updateConfig(params.disabled);
+        return { type: "res", id: req.id, ok: true };
+      } catch (e) {
+        return { type: "res", id: req.id, ok: false, error: { code: "save_failed", message: String(e) } };
       }
     }
 

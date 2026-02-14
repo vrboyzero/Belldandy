@@ -18,6 +18,8 @@ export type ToolExecutorOptions = {
     agentCapabilities?: AgentCapabilities;
     /** 可选：传入后注入到 ToolContext，供工具使用 */
     logger?: ToolExecutorLogger;
+    /** 可选：运行时判断工具是否被禁用（用于调用设置开关） */
+    isToolDisabled?: (toolName: string) => boolean;
 };
 export declare class ToolExecutor {
     private readonly tools;
@@ -27,8 +29,9 @@ export declare class ToolExecutor {
     private readonly auditLogger?;
     private readonly agentCapabilities?;
     private readonly logger?;
+    private readonly isToolDisabled?;
     constructor(options: ToolExecutorOptions);
-    /** 获取所有工具定义（用于发送给模型） */
+    /** 获取所有工具定义（用于发送给模型），已过滤禁用工具 */
     getDefinitions(): {
         type: "function";
         function: {
@@ -37,6 +40,8 @@ export declare class ToolExecutor {
             parameters: object;
         };
     }[];
+    /** 获取所有已注册工具名（不经过 disabled 过滤，用于调用设置列表） */
+    getRegisteredToolNames(): string[];
     /** 检查工具是否存在 */
     hasTool(name: string): boolean;
     /** 动态注册工具 */

@@ -30,6 +30,7 @@
           <span class="token-label">ALL</span><span class="token-val token-val-all" id="tuAll">--</span>
         </div>
         <div class="status" id="status">disconnected</div>
+        <button id="openToolSettings" class="settings-btn" title="调用设置">&#x1F527;</button>
         <button id="openSettings" class="settings-btn" title="Settings">&#x2699;&#xFE0F;</button>
       </div>
     </header>
@@ -170,6 +171,27 @@
       <div class="modal-footer">
         <button id="restartBtn" class="button" style="color: #666;">Restart Server</button>
         <button id="saveSettings" class="button" style="background: #333; color: white;">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tool Settings Modal (调用设置) -->
+  <div id="toolSettingsModal" class="modal-overlay hidden">
+    <div class="modal tool-settings-modal">
+      <div class="modal-header">
+        <span>调用设置</span>
+        <button id="closeToolSettings" class="settings-btn">✕</button>
+      </div>
+      <div class="tool-settings-tabs">
+        <button class="tool-tab active" data-tab="builtin">工具</button>
+        <button class="tool-tab" data-tab="mcp">MCP</button>
+        <button class="tool-tab" data-tab="plugins">插件</button>
+      </div>
+      <div class="modal-body" id="toolSettingsBody">
+        <div class="tool-settings-empty">连接后可查看工具列表</div>
+      </div>
+      <div class="modal-footer">
+        <button id="saveToolSettings" class="button" style="background: var(--text-main); color: #000;">保存</button>
       </div>
     </div>
   </div>

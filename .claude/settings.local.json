@@ -26,7 +26,8 @@
       "mcp__context7__query-docs",
       "WebFetch(domain:docs.anthropic.com)",
       "Bash(npx vitest run:*)",
-      "Bash(npx next build)"
+      "Bash(npx next build)",
+      "Bash(corepack pnpm install --no-frozen-lockfile)"
     ]
   }
 }

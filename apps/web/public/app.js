@@ -1370,3 +1370,207 @@ function escapeHtml(text) {
   div.textContent = text;
   return div.innerHTML;
 }
+
+// ── Tool Settings (调用设置) ──
+const toolSettingsModal = document.getElementById("toolSettingsModal");
+const openToolSettingsBtn = document.getElementById("openToolSettings");
+const closeToolSettingsBtn = document.getElementById("closeToolSettings");
+const saveToolSettingsBtn = document.getElementById("saveToolSettings");
+const toolSettingsBody = document.getElementById("toolSettingsBody");
+
+let toolSettingsData = null; // { builtin, mcp, plugins, disabled }
+let toolSettingsActiveTab = "builtin";
+
+if (openToolSettingsBtn) {
+  openToolSettingsBtn.addEventListener("click", () => toggleToolSettings(true));
+}
+if (closeToolSettingsBtn) {
+  closeToolSettingsBtn.addEventListener("click", () => toggleToolSettings(false));
+}
+if (saveToolSettingsBtn) {
+  saveToolSettingsBtn.addEventListener("click", saveToolSettings);
+}
+
+// Tab switching
+document.querySelectorAll(".tool-tab").forEach(tab => {
+  tab.addEventListener("click", () => {
+    document.querySelectorAll(".tool-tab").forEach(t => t.classList.remove("active"));
+    tab.classList.add("active");
+    toolSettingsActiveTab = tab.dataset.tab;
+    renderToolSettingsTab();
+  });
+});
+
+function toggleToolSettings(show) {
+  if (show) {
+    toolSettingsModal.classList.remove("hidden");
+    loadToolSettings();
+  } else {
+    toolSettingsModal.classList.add("hidden");
+  }
+}
+
+async function loadToolSettings() {
+  if (!ws || !isReady) {
+    toolSettingsBody.innerHTML = '<div class="tool-settings-empty">未连接</div>';
+    return;
+  }
+  toolSettingsBody.innerHTML = '<div class="tool-settings-empty">加载中...</div>';
+
+  const id = makeId();
+  const res = await sendReq({ type: "req", id, method: "tools.list" });
+  if (res && res.ok && res.payload) {
+    toolSettingsData = res.payload;
+    renderToolSettingsTab();
+  } else {
+    toolSettingsBody.innerHTML = '<div class="tool-settings-empty">加载失败</div>';
+  }
+}
+
+function renderToolSettingsTab() {
+  if (!toolSettingsData) return;
+  const { builtin, mcp, plugins, disabled } = toolSettingsData;
+
+  if (toolSettingsActiveTab === "builtin") {
+    renderBuiltinTab(builtin, disabled.builtin || []);
+  } else if (toolSettingsActiveTab === "mcp") {
+    renderMCPTab(mcp, disabled.mcp_servers || []);
+  } else {
+    renderPluginsTab(plugins, disabled.plugins || []);
+  }
+}
+
+function renderBuiltinTab(tools, disabledList) {
+  if (!tools || tools.length === 0) {
+    toolSettingsBody.innerHTML = '<div class="tool-settings-empty">未启用工具系统 (BELLDANDY_TOOLS_ENABLED=false)</div>';
+    return;
+  }
+  const disabledSet = new Set(disabledList);
+  const enabledCount = tools.length - disabledSet.size;
+
+  let html = `<div class="tool-section-header"><span>内置工具</span><span class="tool-section-count">${enabledCount}/${tools.length} 已启用</span></div>`;
+  for (const name of tools.sort()) {
+    const checked = !disabledSet.has(name);
+    html += `<div class="tool-item${checked ? "" : " disabled"}">
+      <span class="tool-item-name">${escapeHtml(name)}</span>
+      <label class="toggle-switch">
+        <input type="checkbox" data-category="builtin" data-name="${escapeHtml(name)}" ${checked ? "checked" : ""}>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>`;
+  }
+  toolSettingsBody.innerHTML = html;
+  bindToggleEvents();
+}
+
+function renderMCPTab(mcpServers, disabledList) {
+  const serverIds = Object.keys(mcpServers || {});
+  if (serverIds.length === 0) {
+    toolSettingsBody.innerHTML = '<div class="tool-settings-empty">未配置 MCP 服务器</div>';
+    return;
+  }
+  const disabledSet = new Set(disabledList);
+  const enabledCount = serverIds.length - disabledSet.size;
+
+  let html = `<div class="tool-section-header"><span>MCP 服务器</span><span class="tool-section-count">${enabledCount}/${serverIds.length} 已启用</span></div>`;
+  for (const serverId of serverIds.sort()) {
+    const server = mcpServers[serverId];
+    const checked = !disabledSet.has(serverId);
+    const toolList = (server.tools || []).map(t => {
+      // 去掉 mcp_{serverId}_ 前缀显示
+      const short = t.replace(`mcp_${serverId}_`, "");
+      return escapeHtml(short);
+    }).join(", ");
+
+    html += `<div class="mcp-group">
+      <div class="mcp-group-header">
+        <span class="mcp-group-name">${escapeHtml(serverId)}</span>
+        <label class="toggle-switch">
+          <input type="checkbox" data-category="mcp_servers" data-name="${escapeHtml(serverId)}" ${checked ? "checked" : ""}>
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      <div class="mcp-group-tools">${toolList || "无工具"}</div>
+    </div>`;
+  }
+  toolSettingsBody.innerHTML = html;
+  bindToggleEvents();
+}
+
+function renderPluginsTab(pluginList, disabledList) {
+  if (!pluginList || pluginList.length === 0) {
+    toolSettingsBody.innerHTML = '<div class="tool-settings-empty">未加载插件（将 .js/.mjs 文件放入 ~/.belldandy/plugins/ 目录）</div>';
+    return;
+  }
+  const disabledSet = new Set(disabledList);
+  const enabledCount = pluginList.length - disabledSet.size;
+
+  let html = `<div class="tool-section-header"><span>插件</span><span class="tool-section-count">${enabledCount}/${pluginList.length} 已启用</span></div>`;
+  for (const name of pluginList.sort()) {
+    const checked = !disabledSet.has(name);
+    html += `<div class="tool-item${checked ? "" : " disabled"}">
+      <span class="tool-item-name">${escapeHtml(name)}</span>
+      <label class="toggle-switch">
+        <input type="checkbox" data-category="plugins" data-name="${escapeHtml(name)}" ${checked ? "checked" : ""}>
+        <span class="toggle-slider"></span>
+      </label>
+    </div>`;
+  }
+  toolSettingsBody.innerHTML = html;
+  bindToggleEvents();
+}
+
+function bindToggleEvents() {
+  toolSettingsBody.querySelectorAll("input[type=checkbox]").forEach(cb => {
+    cb.addEventListener("change", () => {
+      // 更新本地 disabled 数据
+      const category = cb.dataset.category;
+      const name = cb.dataset.name;
+      if (!toolSettingsData || !category || !name) return;
+
+      const list = toolSettingsData.disabled[category] || [];
+      if (cb.checked) {
+        // 移除 disabled
+        toolSettingsData.disabled[category] = list.filter(n => n !== name);
+      } else {
+        // 添加 disabled
+        if (!list.includes(name)) list.push(name);
+        toolSettingsData.disabled[category] = list;
+      }
+
+      // 更新视觉状态
+      const item = cb.closest(".tool-item");
+      if (item) {
+        item.classList.toggle("disabled", !cb.checked);
+      }
+
+      // 更新计数
+      renderToolSettingsTab();
+    });
+  });
+}
+
+async function saveToolSettings() {
+  if (!ws || !isReady || !toolSettingsData) return;
+
+  saveToolSettingsBtn.textContent = "保存中...";
+  saveToolSettingsBtn.disabled = true;
+
+  const id = makeId();
+  const res = await sendReq({
+    type: "req", id, method: "tools.update",
+    params: { disabled: toolSettingsData.disabled },
+  });
+
+  if (res && res.ok) {
+    saveToolSettingsBtn.textContent = "已保存";
+    setTimeout(() => {
+      saveToolSettingsBtn.textContent = "保存";
+      saveToolSettingsBtn.disabled = false;
+    }, 1500);
+  } else {
+    saveToolSettingsBtn.textContent = "失败";
+    saveToolSettingsBtn.disabled = false;
+    alert("保存失败: " + (res?.error?.message || "未知错误"));
+  }
+}

@@ -4,6 +4,8 @@ export declare class PluginRegistry {
     private plugins;
     private tools;
     private hooksList;
+    /** pluginId → 该插件注册的工具名列表 */
+    private pluginToolMap;
     /**
      * Load a plugin from a file path.
      * The file must default export an object implementing BelldandyPlugin.
@@ -17,6 +19,14 @@ export declare class PluginRegistry {
      * Get all registered tools
      */
     getAllTools(): Tool[];
+    /**
+     * Get all loaded plugin IDs
+     */
+    getPluginIds(): string[];
+    /**
+     * Get plugin → tool names mapping (for tools-config integration)
+     */
+    getPluginToolMap(): Map<string, string[]>;
     /**
      * Get aggregated hooks to pass to the Agent
      */

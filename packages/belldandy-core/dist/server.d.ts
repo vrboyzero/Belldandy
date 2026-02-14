@@ -1,6 +1,9 @@
 import { type BelldandyAgent, ConversationStore } from "@belldandy/agent";
 import type { GatewayEventFrame } from "@belldandy/protocol";
 import type { BelldandyLogger } from "./logger/index.js";
+import type { ToolsConfigManager } from "./tools-config.js";
+import type { ToolExecutor } from "@belldandy/skills";
+import type { PluginRegistry } from "@belldandy/plugins";
 export type GatewayServerOptions = {
     port: number;
     host?: string;
@@ -27,6 +30,12 @@ export type GatewayServerOptions = {
         webPath: string;
         htmlAudio: string;
     } | null>;
+    /** 调用设置管理器 */
+    toolsConfigManager?: ToolsConfigManager;
+    /** 工具执行器（用于获取已注册工具列表） */
+    toolExecutor?: ToolExecutor;
+    /** 插件注册表（用于获取已加载插件列表） */
+    pluginRegistry?: PluginRegistry;
 };
 export type GatewayServer = {
     port: number;

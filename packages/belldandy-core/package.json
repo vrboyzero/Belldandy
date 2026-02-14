@@ -17,6 +17,7 @@
     "@belldandy/channels": "workspace:*",
     "@belldandy/mcp": "workspace:*",
     "@belldandy/memory": "workspace:*",
+    "@belldandy/plugins": "workspace:*",
     "@belldandy/protocol": "workspace:*",
     "@belldandy/skills": "workspace:*",
     "express": "^5.1.0",

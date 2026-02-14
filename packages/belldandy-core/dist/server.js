@@ -17,6 +17,8 @@ const DEFAULT_METHODS = [
     "workspace.read",
     "workspace.write",
     "context.compact",
+    "tools.list",
+    "tools.update",
 ];
 const DEFAULT_EVENTS = ["chat.delta", "chat.final", "agent.status", "token.usage", "pairing.required"];
 export async function startGatewayServer(opts) {
@@ -174,6 +176,9 @@ export async function startGatewayServer(opts) {
                 conversationStore,
                 ttsEnabled: opts.ttsEnabled,
                 ttsSynthesize: opts.ttsSynthesize,
+                toolsConfigManager: opts.toolsConfigManager,
+                toolExecutor: opts.toolExecutor,
+                pluginRegistry: opts.pluginRegistry,
             });
             if (res)
                 sendRes(ws, res);
@@ -585,6 +590,47 @@ async function handleReq(ws, req, ctx) {
             }
             catch (e) {
                 return { type: "res", id: req.id, ok: false, error: { code: "write_failed", message: String(e) } };
+            }
+        }
+        case "tools.list": {
+            if (!ctx.toolExecutor || !ctx.toolsConfigManager) {
+                return { type: "res", id: req.id, ok: true, payload: { builtin: [], mcp: {}, plugins: [], disabled: { builtin: [], mcp_servers: [], plugins: [] } } };
+            }
+            const allNames = ctx.toolExecutor.getRegisteredToolNames();
+            const config = ctx.toolsConfigManager.getConfig();
+            // 分类工具
+            const builtin = [];
+            const mcp = {};
+            for (const name of allNames) {
+                if (name.startsWith("mcp_")) {
+                    // 提取 serverId: mcp_{serverId}_{toolName}
+                    const rest = name.slice(4);
+                    const idx = rest.indexOf("_");
+                    const serverId = idx > 0 ? rest.slice(0, idx) : rest;
+                    if (!mcp[serverId])
+                        mcp[serverId] = { tools: [] };
+                    mcp[serverId].tools.push(name);
+                }
+                else {
+                    builtin.push(name);
+                }
+            }
+            return { type: "res", id: req.id, ok: true, payload: { builtin, mcp, plugins: ctx.pluginRegistry?.getPluginIds() ?? [], disabled: config.disabled } };
+        }
+        case "tools.update": {
+            if (!ctx.toolsConfigManager) {
+                return { type: "res", id: req.id, ok: false, error: { code: "not_available", message: "Tools config not available" } };
+            }
+            const params = req.params;
+            if (!params?.disabled) {
+                return { type: "res", id: req.id, ok: false, error: { code: "invalid_params", message: "Missing disabled" } };
+            }
+            try {
+                await ctx.toolsConfigManager.updateConfig(params.disabled);
+                return { type: "res", id: req.id, ok: true };
+            }
+            catch (e) {
+                return { type: "res", id: req.id, ok: false, error: { code: "save_failed", message: String(e) } };
             }
         }
         case "system.restart": {

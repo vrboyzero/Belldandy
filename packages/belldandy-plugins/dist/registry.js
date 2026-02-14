@@ -5,6 +5,8 @@ export class PluginRegistry {
     plugins = new Map();
     tools = new Map();
     hooksList = [];
+    /** pluginId → 该插件注册的工具名列表 */
+    pluginToolMap = new Map();
     /**
      * Load a plugin from a file path.
      * The file must default export an object implementing BelldandyPlugin.
@@ -23,12 +25,14 @@ export class PluginRegistry {
                 return;
             }
             console.log(`Loading plugin: ${plugin.name} (${plugin.id})`);
+            const pluginToolNames = [];
             const context = {
                 registerTool: (tool) => {
                     if (this.tools.has(tool.definition.name)) {
                         console.warn(`Plugin ${plugin.id} registered duplicate tool: ${tool.definition.name}`);
                     }
                     this.tools.set(tool.definition.name, tool);
+                    pluginToolNames.push(tool.definition.name);
                 },
                 registerHooks: (hooks) => {
                     this.hooksList.push(hooks);
@@ -36,6 +40,7 @@ export class PluginRegistry {
             };
             await plugin.activate(context);
             this.plugins.set(plugin.id, plugin);
+            this.pluginToolMap.set(plugin.id, pluginToolNames);
         }
         catch (err) {
             console.error(`Failed to load plugin from ${filePath}:`, err);
@@ -63,6 +68,18 @@ export class PluginRegistry {
      */
     getAllTools() {
         return Array.from(this.tools.values());
+    }
+    /**
+     * Get all loaded plugin IDs
+     */
+    getPluginIds() {
+        return Array.from(this.plugins.keys());
+    }
+    /**
+     * Get plugin → tool names mapping (for tools-config integration)
+     */
+    getPluginToolMap() {
+        return this.pluginToolMap;
     }
     /**
      * Get aggregated hooks to pass to the Agent
