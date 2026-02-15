@@ -126,7 +126,11 @@ Belldandy/
     ├── memory/                      # 每日笔记
     ├── methods/                     # SOP 方法论
     ├── skills/                      # 用户自定义工具
-    └── plugins/                     # 用户插件
+    ├── plugins/                     # 用户插件
+    ├── cron-jobs.json               # 定时任务持久化
+    └── sessions/                    # 会话记录与压缩状态
+        ├── {id}.jsonl               # 会话持久化
+        └── {id}.compaction.json     # 压缩状态
 ```
 
 ---
@@ -198,6 +202,13 @@ corepack pnpm dev:gateway
 | **方法论** | SOP 沉淀 | Agent 自我进化与经验复用 |
 | **MCP 支持** | Model Context Protocol | 连接外部 MCP 服务器，扩展工具生态 |
 | **渠道** | 飞书 + Channel 接口 | 可扩展的多渠道架构 |
+| **定时任务** | Cron + Heartbeat | `cron` 工具支持 `at`/`every` 调度；Heartbeat 周期性检查 |
+| **模组切换** | FACET System | `switch_facet` 工具一键切换人格模组 (Persona) |
+| **原生视觉** | Native Vision & Video | 支持 Kimi K2.5 等模型直接理解上传的图片与视频 (`ms://` 协议) |
+| **长程记忆** | Context Compaction | 三层上下文压缩 (Working/Rolling/Archival) 防止 Token 溢出 |
+| **服务管理** | Service Restart | Agent 可通过 `service_restart` 工具自主重启服务 |
+| **可视化** | Config & Tools UI | Web 界面管理配置、工具开关与 System Doctor 自检 |
+
 
 ---
 
@@ -256,6 +267,18 @@ BELLDANDY_LOG_MAX_SIZE=10MB             # 单文件最大大小，超过则轮�
 BELLDANDY_LOG_RETENTION_DAYS=7          # 日志保留天数，超过自动清理
 BELLDANDY_LOG_CONSOLE=true              # 是否输出到控制台
 BELLDANDY_LOG_FILE=true                 # 是否写入文件
+
+# ------ 长程记忆与压缩 ------
+BELLDANDY_COMPACTION_ENABLED=true       # 启用上下文自动压缩
+BELLDANDY_COMPACTION_THRESHOLD=20000    # 触发压缩的 Token 阈值
+BELLDANDY_COMPACTION_KEEP_RECENT=10     # 保留最近 N 条完整消息
+
+# ------ 定时任务 (Cron) ------
+BELLDANDY_CRON_ENABLED=true             # 启用 Cron 调度引擎 (默认工具可用，此开关控制自动执行)
+
+# ------ 模型容灾与多模态 ------
+BELLDANDY_MODEL_CONFIG_FILE=~/.belldandy/models.json # 备用模型与视频上传配置
+
 ```
 
 ### 工具权限与策略（简要）
@@ -511,9 +534,44 @@ corepack pnpm dev:gateway
 
 插件放到 `~/.belldandy/plugins/` 目录，Gateway 启动时自动加载。
 
----
-
-## 管理命令
+515: 
+516: ---
+517: 
+518: ## 主要新增功能详解
+519: 
+520: ### 1. 原生视觉与视频理解
+521: 
+522: 支持直接发送图片和视频（需配置支持视觉的模型，如 Kimi k2.5）。
+523: 
+524: - **图片**：直接上传，模型即刻“看见”。
+525: - **视频**：上传视频文件（支持 mp4/mov 等），Agent 自动上传至云端并通过 `ms://` 协议引用，实现长视频理解。
+526: 
+527: ### 2. Cron 定时任务
+528: 
+529: 比 Heartbeat 更灵活的精确定时任务。直接告诉 Agent：
+530: 
+531: > "下午 3 点提醒我开会" (一次性)
+532: > "每 4 小时提醒我喝水" (周期性)
+533: 
+534: 通过 `cron` 工具自动管理，支持持久化存储。
+535: 
+536: ### 3. 上下文自动压缩 (Context Compaction)
+537: 
+538: 解决长对话 Token 溢出问题。采用 **三层渐进式压缩** 架构：
+539: 
+540: 1. **Working Memory**：保留最近 N 条完整消息。
+541: 2. **Rolling Summary**：溢出消息增量生成滚动摘要。
+542: 3. **Archival Summary**：摘要过长时进一步归档为核心结论。
+543: 
+544: 即使对话数千轮，也能保持“核心记忆”不丢失，同时大幅节省 Token。
+545: 
+546: ### 4. FACET 模组切换
+547: 
+548: 告诉 Agent "切换模组为 coder" 或 "切换 FACET 为 translator"，即可一键切换 `SOUL.md` 中的人格模组并自动重启生效。
+549: 
+550: ---
+551: 
+552: ## 管理命令
 
 ```bash
 # 查看已授权设备

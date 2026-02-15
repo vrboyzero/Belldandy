@@ -118,7 +118,11 @@ Belldandy/
     ├── memory/                      # Daily notes
     ├── methods/                     # SOP methods
     ├── skills/                      # User‑defined tools
-    └── plugins/                     # User plugins
+    ├── plugins/                     # User plugins
+    ├── cron-jobs.json               # Cron jobs persistence
+    └── sessions/                    # Session logs & compaction state
+        ├── {id}.jsonl               # Session persistence
+        └── {id}.compaction.json     # Compaction state
 ```
 
 ---
@@ -196,6 +200,13 @@ For security reasons, the first client must be paired:
 | **Methodology**   | SOP system                     | Agent self‑improvement and SOP reuse                             |
 | **MCP**           | Model Context Protocol support | Connect external MCP servers as tools                            |
 | **Channels**      | Feishu channel + channel API   | Extensible multi‑channel architecture                            |
+| **Cron**          | Cron Tasks + Heartbeat         | `cron` tools for `at`/`every` scheduling; Heartbeat periodic checks |
+| **Persona**       | FACET System                   | `switch_facet` tool to switch persona modules instantly          |
+| **Vision**        | Native Vision & Video          | Support Kimi K2.5 for understanding uploaded images/videos (`ms://`) |
+| **Memory**        | Context Compaction             | 3-tier context compression (Working/Rolling/Archival) prevents token overflow |
+| **Management**    | Service Restart                | Agent can autonomously restart the gateway via `service_restart` |
+| **UI**            | Config & Tools UI              | Web UI for settings, tool toggles, and System Doctor self-check  |
+
 
 ---
 
@@ -253,6 +264,18 @@ BELLDANDY_LOG_MAX_SIZE=10MB             # Rotate when exceeded
 BELLDANDY_LOG_RETENTION_DAYS=7          # Auto‑delete old logs
 BELLDANDY_LOG_CONSOLE=true              # Log to console
 BELLDANDY_LOG_FILE=true                 # Log to files
+
+# ------ Long-term Memory & Compaction ------
+BELLDANDY_COMPACTION_ENABLED=true       # Enable automatic context compression
+BELLDANDY_COMPACTION_THRESHOLD=20000    # Token usage threshold to trigger compaction
+BELLDANDY_COMPACTION_KEEP_RECENT=10     # Number of recent messages to keep raw
+
+# ------ Cron Tasks ------
+BELLDANDY_CRON_ENABLED=true             # Enable the Cron scheduling engine
+
+# ------ Failover & Multimodal ------
+BELLDANDY_MODEL_CONFIG_FILE=~/.belldandy/models.json # Fallback models & video upload config
+
 ```
 
 ### Tool Permissions (Brief)
@@ -494,9 +517,43 @@ Use the camera via browser to let the Agent "see" the physical world.
 
 Place plugins under `~/.belldandy/plugins/`. They are loaded automatically when the gateway starts.
 
----
-
-## Management Commands
+497: ---
+498: 
+499: ## Key New Features
+500: 
+501: ### 1. Native Vision & Video Understanding
+502: 
+503: Directly send images and videos (requires a vision-capable model like Kimi k2.5).
+504: 
+505: - **Images**: Upload directly; the model "sees" it immediately.
+506: - **Videos**: Upload video files (mp4/mov, etc.). The Agent automatically uploads them to the cloud and references them via `ms://` protocol for long-video understanding.
+507: 
+508: ### 2. Cron Tasks
+509: 
+510: More flexible than Heartbeat. Just tell the Agent:
+511: 
+512: > "Remind me to meet at 3 PM" (One-time)
+513: > "Remind me to drink water every 4 hours" (Recurring)
+514: 
+515: Managed automatically via `cron` tools with persistence.
+516: 
+517: ### 3. Context Compaction
+518: 
+519: Solves token overflow in long conversations using a **3-tier progressive compression** architecture:
+520: 
+521: 1. **Working Memory**: Keeps the last N raw messages.
+522: 2. **Rolling Summary**: Incrementally summarizes overflowed messages.
+523: 3. **Archival Summary**: Further condenses summaries into core conclusions when they get too long.
+524: 
+525: Keeps "core memory" intact even after thousands of turns while saving tokens.
+526: 
+527: ### 4. FACET Persona Switching
+528: 
+529: Tell the Agent "Switch module to coder" or "Switch FACET to translator" to instantly swap the persona module in `SOUL.md` and auto-restart to apply changes.
+530: 
+531: ---
+532: 
+533: ## Management Commands
 
 ```bash
 # List approved devices
