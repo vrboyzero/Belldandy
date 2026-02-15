@@ -138,6 +138,19 @@ BELLDANDY_TOOLS_POLICY_FILE=E:\project\belldandy\config\tools-policy.json
 BELLDANDY_EXTRA_WORKSPACE_ROOTS=E:\projects,D:\workspace
 ```
 
+### 3.3.1 可视化工具管理 (Tool Settings)
+
+除了通过环境变量和策略文件进行全局控制外，Belldandy 还提供了**可视化的工具管理面板**，允许你在运行时动态启用或禁用特定的工具、MCP 服务器或插件。
+
+1.  在 WebChat 界面顶部，点击 **工具设置图标** (🛠️)。
+2.  面板分为三类：
+    -   **Builtin Tools**：内置工具（如 `web_fetch`, `file_read`）。
+    -   **MCP Servers**：已连接的 MCP 服务（如 `filesystem`, `github`）。
+    -   **Plugins**：已加载的插件。
+3.  点击开关即可实时启用/禁用。修改后的状态会自动持久化保存，重启后依然生效。
+
+> **应用场景**：当你希望暂时禁止 Agent 联网，或者在调试某个 MCP 服务时通过禁用其他服务来排除干扰。
+
 ### 3.4 模型容灾配置 (Model Failover)
 
 当主模型因限流 (429)、余额不足 (402)、服务器故障 (5xx) 或超时等问题不可用时，Belldandy 可以 **自动切换到备用模型**，保证不中断服务。

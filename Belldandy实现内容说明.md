@@ -469,6 +469,29 @@
 *   **Frontend**: 
     *   原生 JS/CSS 实现 Modal 组件，无缝集成到现有 MVP。
 
+### 6.5 Phase 2.6: 可视化工具管理 (Tool & MCP Management UI)
+
+**状态**：✅ 已完成
+
+**目标**：赋予用户精细控制 Agent 能力边界的权限，允许在运行时动态启用/禁用特定的工具、MCP 服务器或插件。
+
+**实现内容**：
+- **Tool Settings Panel (调用设置)**：
+    - 在 WebChat 顶部栏新增 **工具设置** 入口（🛠️ 图标）。
+    - **分栏管理**：
+        - **Builtin Tools**：管理内置工具（Web, File, OS 等）。
+        - **MCP Servers**：管理已连接的 MCP 服务器及其工具。
+        - **Plugins**：管理已加载的插件。
+    - **实时开关**：
+        - 提供 Toggle Switch 开关。
+        - 修改后立即生效（更新 Gateway 内存状态并持久化到配置）。
+- **后端协议**：
+    - 新增 `tools.list`：获取当前工具列表及禁用状态。
+    - 新增 `tools.update`：更新工具禁用列表（`disabled: { builtin: [], mcp_servers: [], plugins: [] }`）。
+- **价值**：
+    - **安全性**：用户可以一键禁用高风险工具（如 `run_command`），实现"按需授权"。
+    - **调试便利**：开发者可以快速启用/禁用特定 MCP 服务器进行调试。
+
 ### 7. Phase 3: 极致美学重构 (Ethereal Digital UI)
 
 **状态**：✅ 已完成

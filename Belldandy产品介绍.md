@@ -63,10 +63,12 @@ Belldandy 是一款面向开发者与创作者的 **本地优先个人 AI 助手
 - **功能**：通过浏览器扩展 + `/mirror.html` 回环页面获取摄像头画面，使用 `browser_navigate` + `browser_screenshot` 为模型提供视觉输入。
 - **特色**：不额外引入 WebRTC/媒体服务器，仅复用现有浏览器链路完成“看世界”，在复杂度和隐私之间取得平衡，是未来多模态交互的第一步。
 
-### 14. 极速启动与可视化配置/Doctor（Phase 1.5 & 2.5）
+### 14. 极速启动与可视化配置/管理（Phase 1.5 & 2.5 & 2.6）
 
-- **功能**：提供 `start.bat`/`start.sh` 一键启动脚本（含自动安装依赖、重启环），并在 WebChat 中集成 Settings 配置面板与 System Doctor 健康检查。
-- **特色**：Lenient Mode 允许在未配置 API Key 时仍然启动 UI，以友好的错误提示引导用户完成配置，降低新手门槛；Doctor 支持对 Node 版本、向量库、配置等做一键体检。
+- **功能**：提供 `start.bat`/`start.sh` 一键启动脚本（含自动安装依赖、重启环），并在 WebChat 中集成 Settings 配置面板、System Doctor 健康检查与 Tool Settings 工具管理。
+- **特色**：
+    - **Doctor & Settings**：Lenient Mode 引导新手完成配置，一键体检 Node 环境与向量库状态。
+    - **Tool Manager (Phase 2.6)**：赋予用户对 Agent 能力的微观控制权——通过可视化开关实时启停任意 MCP 服务或插件，兼顾灵活性与安全性。
 
 ### 15. 渠道架构升级与飞书渠道（Phase 6 & 15）
 - **功能**：实现 `Channel` 通用接口与 `ChannelManager` 管理器，并已完成 Feishu 渠道实现，可通过飞书自建应用 + WebSocket 长连接与 Belldandy 聊天。
